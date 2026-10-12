@@ -1,5 +1,6 @@
-import { db, kvGet } from './db.ts';
-import { fromListItem, getDetails, mapLimit, rememberListItems, snapshot, tmdb } from './tmdb.ts';
+import { all, batch, loadConfig, type Config } from './db.ts';
+import { fromListItem, getTitle, mapLimit, rememberListItems, tmdb } from './tmdb.ts';
+import type { D1Stmt } from './env.ts';
 import { GENRES, MOODS, RUNTIMES, periodRange } from '../shared/catalog.ts';
 import type { MediaType, SessionFilters, Title } from '../shared/types.ts';
 import { parseKey } from '../shared/types.ts';
@@ -18,20 +19,20 @@ export function shuffle<T>(arr: T[], rand = Math.random): T[] {
  * rewatches are on), anything either of us rejected, anything we've both
  * already voted on, and what's already on the watchlist.
  */
-export function excludedKeys(opts: { includeRewatches: boolean; extra?: Iterable<string> }): Set<string> {
-  const resetAt = kvGet<string>('discoveryResetAt', '1970-01-01');
+export async function excludedKeys(opts: { includeRewatches: boolean; resetAt: string; extra?: Iterable<string> }): Promise<Set<string>> {
+  const parts = [
+    `SELECT key FROM votes WHERE vote = 'no' AND voted_at > ?1`,
+    `SELECT key FROM votes WHERE voted_at > ?1 GROUP BY key HAVING COUNT(DISTINCT player) >= 2`,
+    `SELECT key FROM watchlist`,
+  ];
+  if (!opts.includeRewatches) parts.unshift(`SELECT key FROM watched`);
+  const rows = await all<{ key: string }>(parts.join(' UNION '), opts.resetAt);
   const out = new Set<string>(opts.extra ?? []);
-  if (!opts.includeRewatches) for (const r of db.prepare('SELECT key FROM watched').all() as { key: string }[]) out.add(r.key);
-  for (const r of db.prepare("SELECT DISTINCT key FROM votes WHERE vote = 'no' AND voted_at > ?").all(resetAt) as { key: string }[]) out.add(r.key);
-  for (const r of db
-    .prepare('SELECT key FROM votes WHERE voted_at > ? GROUP BY key HAVING COUNT(DISTINCT player) >= 2')
-    .all(resetAt) as { key: string }[])
-    out.add(r.key);
-  for (const r of db.prepare('SELECT key FROM watchlist').all() as { key: string }[]) out.add(r.key);
+  for (const r of rows) out.add(r.key);
   return out;
 }
 
-export function discoverParams(type: MediaType, f: SessionFilters): Record<string, string | number | undefined> {
+export function discoverParams(type: MediaType, f: SessionFilters, cfg: Pick<Config, 'region' | 'services'>): Record<string, string | number | undefined> {
   const wanted = new Set<string>(f.genres);
   if (!f.genres.length) for (const m of f.moods) for (const g of MOODS.find((x) => x.id === m)?.genres ?? []) wanted.add(g);
   const ids = new Set<number>();
@@ -60,10 +61,9 @@ export function discoverParams(type: MediaType, f: SessionFilters): Record<strin
     if (rt?.lte || rt?.gte) p['with_runtime.gte'] ??= 40;
   }
 
-  const services = kvGet<number[]>('services', []);
-  if (f.onlyMyServices && services.length) {
-    p.watch_region = kvGet<string>('region', 'US');
-    p.with_watch_providers = services.join('|');
+  if (f.onlyMyServices && cfg.services.length) {
+    p.watch_region = cfg.region;
+    p.with_watch_providers = cfg.services.join('|');
     p.with_watch_monetization_types = 'flatrate|free|ads';
   }
   return p;
@@ -71,13 +71,17 @@ export function discoverParams(type: MediaType, f: SessionFilters): Record<strin
 
 type Page = { results: unknown[]; total_pages: number };
 
-async function candidatesFor(type: MediaType, f: SessionFilters, exclude: Set<string>, want: number): Promise<Title[]> {
-  const params = discoverParams(type, f);
+// Cloudflare's free plan allows 50 outbound requests per call, so a deck
+// uses two discover pages per type plus one light lookup per candidate card.
+async function candidatesFor(type: MediaType, f: SessionFilters, cfg: Config, exclude: Set<string>, want: number): Promise<Title[]> {
+  const params = discoverParams(type, f, cfg);
   const first = await tmdb<Page>(`/discover/${type}`, { ...params, page: 1 }, 30 * 60 * 1000);
-  const totalPages = Math.min(first.total_pages || 1, 25);
-  // Random pages give variety each night, while still favouring popular titles.
-  const pages = shuffle(Array.from({ length: totalPages - 1 }, (_, i) => i + 2)).slice(0, 4);
-  const lists = [first, ...(await Promise.all(pages.map((page) => tmdb<Page>(`/discover/${type}`, { ...params, page }, 30 * 60 * 1000).catch(() => ({ results: [], total_pages: 0 })))))];
+  const lists: Page[] = [first];
+  const totalPages = Math.min(first.total_pages || 1, 20);
+  if (totalPages > 1) {
+    const page = 2 + Math.floor(Math.random() * (totalPages - 1));
+    lists.push(await tmdb<Page>(`/discover/${type}`, { ...params, page }, 30 * 60 * 1000).catch(() => ({ results: [], total_pages: 0 })));
+  }
   const seen = new Set<string>();
   const out: Title[] = [];
   for (const l of lists)
@@ -90,14 +94,15 @@ async function candidatesFor(type: MediaType, f: SessionFilters, exclude: Set<st
   return shuffle(out).slice(0, want);
 }
 
-/** Pick fresh titles for a movie night and fetch full details for each card. */
+/** Pick fresh titles for a movie night and fetch card details for each. */
 export async function buildDeck(f: SessionFilters, size: number, extraExclude: Iterable<string> = []): Promise<Title[]> {
-  const exclude = excludedKeys({ includeRewatches: f.includeRewatches, extra: extraExclude });
+  const cfg = await loadConfig();
+  const exclude = await excludedKeys({ includeRewatches: f.includeRewatches, resetAt: cfg.resetAt, extra: extraExclude });
 
   let pool: Title[];
   if (f.source === 'watchlist') {
-    const rows = db.prepare('SELECT key FROM watchlist').all() as { key: string }[];
-    const watched = new Set((db.prepare('SELECT key FROM watched').all() as { key: string }[]).map((r) => r.key));
+    const rows = await all<{ key: string }>('SELECT key FROM watchlist');
+    const watched = new Set((await all<{ key: string }>('SELECT key FROM watched')).map((r) => r.key));
     const extra = new Set(extraExclude);
     const keys = rows
       .map((r) => r.key)
@@ -106,9 +111,9 @@ export async function buildDeck(f: SessionFilters, size: number, extraExclude: I
     pool = shuffle(keys).map((key) => ({ key }) as Title);
   } else {
     const types: MediaType[] = f.type === 'both' ? ['movie', 'tv'] : [f.type];
-    const want = Math.ceil((size * 1.4) / types.length) + 2;
-    const lists = await Promise.all(types.map((t) => candidatesFor(t, f, exclude, want)));
-    // Interleave so "both" decks feel mixed, favouring movies roughly 60/40.
+    const want = Math.ceil((size * 1.3) / types.length) + 1;
+    const lists = await Promise.all(types.map((t) => candidatesFor(t, f, cfg, exclude, want)));
+    // Interleave so "both" decks feel mixed.
     pool = [];
     const [a, b = []] = lists;
     while (a.length || b.length) {
@@ -116,17 +121,20 @@ export async function buildDeck(f: SessionFilters, size: number, extraExclude: I
       if (a.length && Math.random() < 0.5) pool.push(a.shift()!);
       if (b.length) pool.push(b.shift()!);
     }
-    rememberListItems(pool);
+    await rememberListItems(pool);
   }
 
-  const picked = pool.slice(0, Math.ceil(size * 1.3));
+  const picked = pool.slice(0, Math.ceil(size * 1.25));
+  const writes: D1Stmt[] = [];
   const detailed = await mapLimit(picked, 6, async (t) => {
     try {
-      return snapshot(await getDetails(t.key));
+      return await getTitle(t.key, cfg.region, writes);
     } catch {
       return null;
     }
   });
+  await batch(writes);
+
   const rt = RUNTIMES.find((r) => r.id === f.runtime);
   return detailed
     .filter((t): t is Title => Boolean(t && t.poster))

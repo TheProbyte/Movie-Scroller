@@ -1,0 +1,3 @@
+# Local development secrets (copy to .dev.vars). All optional.
+TMDB_API_KEY=
+APP_PASSCODE=

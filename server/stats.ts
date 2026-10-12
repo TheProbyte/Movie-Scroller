@@ -1,4 +1,4 @@
-import { db } from './db.ts';
+import { all, loadConfig, one } from './db.ts';
 import { getTitles } from './tmdb.ts';
 import type { PlayerId, StatsGenre, TasteStats, Vote } from '../shared/types.ts';
 import { classifyMatch } from '../shared/types.ts';
@@ -8,13 +8,11 @@ const pct = (n: number, d: number) => (d ? n / d : 0);
 
 export async function tasteStats(): Promise<TasteStats> {
   // Latest vote per player per title, across every movie night.
-  const rows = db
-    .prepare(
-      `SELECT v.player, v.key, v.vote FROM votes v
-       JOIN (SELECT player, key, MAX(voted_at) AS at FROM votes GROUP BY player, key) l
-         ON l.player = v.player AND l.key = v.key AND l.at = v.voted_at`,
-    )
-    .all() as { player: PlayerId; key: string; vote: Vote }[];
+  const rows = await all<{ player: PlayerId; key: string; vote: Vote }>(
+    `SELECT v.player, v.key, v.vote FROM votes v
+     JOIN (SELECT player, key, MAX(voted_at) AS at FROM votes GROUP BY player, key) l
+       ON l.player = v.player AND l.key = v.key AND l.at = v.voted_at`,
+  );
   const byKey = new Map<string, Partial<Record<PlayerId, Vote>>>();
   for (const r of rows) {
     const e = byKey.get(r.key) ?? {};
@@ -22,13 +20,11 @@ export async function tasteStats(): Promise<TasteStats> {
     byKey.set(r.key, e);
   }
 
-  const watchedRows = db.prepare('SELECT key, rating1, rating2, watched_at FROM watched ORDER BY watched_at DESC').all() as {
-    key: string;
-    rating1: number | null;
-    rating2: number | null;
-  }[];
+  const watchedRows = await all<{ key: string; rating1: number | null; rating2: number | null }>(
+    'SELECT key, rating1, rating2, watched_at FROM watched ORDER BY watched_at DESC',
+  );
 
-  const titles = await getTitles([...byKey.keys(), ...watchedRows.map((w) => w.key)]);
+  const titles = await getTitles([...byKey.keys(), ...watchedRows.map((w) => w.key)], (await loadConfig()).region);
 
   let shared = 0;
   let agree = 0;
@@ -80,16 +76,14 @@ export async function tasteStats(): Promise<TasteStats> {
   // Matches counted per completed movie night.
   let perfectMatches = 0;
   let possibleMatches = 0;
-  const sessionVotes = db
-    .prepare(
-      `SELECT v.session_id, v.key,
-              MAX(CASE WHEN v.player = 1 THEN v.vote END) AS a,
-              MAX(CASE WHEN v.player = 2 THEN v.vote END) AS b
-       FROM votes v JOIN sessions s ON s.id = v.session_id
-       WHERE s.status = 'complete'
-       GROUP BY v.session_id, v.key`,
-    )
-    .all() as { a: Vote | null; b: Vote | null }[];
+  const sessionVotes = await all<{ a: Vote | null; b: Vote | null }>(
+    `SELECT v.session_id, v.key,
+            MAX(CASE WHEN v.player = 1 THEN v.vote END) AS a,
+            MAX(CASE WHEN v.player = 2 THEN v.vote END) AS b
+     FROM votes v JOIN sessions s ON s.id = v.session_id
+     WHERE s.status = 'complete'
+     GROUP BY v.session_id, v.key`,
+  );
   for (const r of sessionVotes) {
     const m = classifyMatch(r.a ?? undefined, r.b ?? undefined);
     if (m === 'perfect') perfectMatches++;
@@ -105,7 +99,7 @@ export async function tasteStats(): Promise<TasteStats> {
     .slice(0, 8)
     .map((w) => ({ key: w.key, ratings: { 1: w.rating1!, 2: w.rating2! } }));
 
-  const sessions = (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE status = 'complete'").get() as { n: number }).n;
+  const sessions = (await one<{ n: number }>("SELECT COUNT(*) AS n FROM sessions WHERE status = 'complete'"))?.n ?? 0;
   const keep = new Set([...splits.slice(0, 12).map((s) => s.key), ...ratingGaps.map((r) => r.key)]);
 
   return {

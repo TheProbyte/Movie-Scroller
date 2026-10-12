@@ -51,7 +51,7 @@ export function Night() {
   const { id = '' } = useParams();
   const { me, toast } = useApp();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['session', id], queryFn: () => api.session(id), refetchInterval: (query) => (query.state.data?.status === 'swiping' ? 15_000 : false) });
+  const q = useQuery({ queryKey: ['session', id], queryFn: () => api.session(id) });
   const s = q.data;
 
   // Optimistic local votes per player (null = undone) layered over the server state.

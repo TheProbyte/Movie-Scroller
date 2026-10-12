@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, getToken } from './api';
+import { api } from './api';
 import type { Bootstrap, PlayerId } from '../shared/types';
 
 type ImgSize = 'w92' | 'w185' | 'w342' | 'w500' | 'w780' | 'w1280' | 'original' | 'h632';
@@ -34,49 +34,30 @@ const readMe = (): PlayerId | null => {
   }
 };
 
-/** Keep every open phone in sync via server-sent events. */
+/**
+ * Keep both phones in sync by polling. Movie-night data refreshes quickly so
+ * partner progress feels live; everything else refreshes at a relaxed pace.
+ */
 function useLiveSync(enabled: boolean) {
   const qc = useQueryClient();
   useEffect(() => {
     if (!enabled) return;
-    let es: EventSource | null = null;
-    let closed = false;
-    const connect = () => {
-      es = new EventSource(`/api/events?token=${encodeURIComponent(getToken())}`);
-      es.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data) as { type: string; id?: string };
-          if (msg.type === 'session') {
-            if (msg.id) qc.invalidateQueries({ queryKey: ['session', msg.id] });
-            qc.invalidateQueries({ queryKey: ['sessions'] });
-            qc.invalidateQueries({ queryKey: ['active'] });
-            qc.invalidateQueries({ queryKey: ['stats'] });
-          } else if (msg.type === 'watchlist') {
-            qc.invalidateQueries({ queryKey: ['watchlist'] });
-            qc.invalidateQueries({ queryKey: ['title'] });
-          } else if (msg.type === 'watched') {
-            qc.invalidateQueries({ queryKey: ['watched'] });
-            qc.invalidateQueries({ queryKey: ['title'] });
-            qc.invalidateQueries({ queryKey: ['stats'] });
-          } else if (msg.type === 'settings') {
-            qc.invalidateQueries({ queryKey: ['boot'] });
-          }
-        } catch {
-          /* ignore malformed */
-        }
-      };
-    };
-    connect();
+    const visible = () => document.visibilityState === 'visible';
+    const fast = window.setInterval(() => {
+      if (!visible()) return;
+      qc.invalidateQueries({ queryKey: ['session'] });
+      qc.invalidateQueries({ queryKey: ['active'] });
+    }, 4000);
+    const slow = window.setInterval(() => {
+      if (!visible()) return;
+      for (const key of ['watchlist', 'watched', 'sessions', 'title', 'boot']) qc.invalidateQueries({ queryKey: [key] });
+    }, 20000);
     // Phones suspend background tabs; refresh everything when we come back.
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible' || closed) return;
-      if (!es || es.readyState === EventSource.CLOSED) connect();
-      qc.invalidateQueries();
-    };
+    const onVisible = () => visible() && qc.invalidateQueries();
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      closed = true;
-      es?.close();
+      window.clearInterval(fast);
+      window.clearInterval(slow);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [enabled, qc]);

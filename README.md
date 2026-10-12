@@ -8,70 +8,54 @@ A cozy, private, swipe-to-match movie & TV picker for two. Each of you swipes **
 - **Watchlist** – *Both want*, *Maybe later*, and *Saved* sections, movie/TV filter, roulette, or start a night from it.
 - **Already watched** – timeline with individual star ratings for each of you. Watched titles are skipped in future nights unless you include rewatches.
 - **History & Our Taste** – every night’s filters, votes and matches, plus agreement %, favorite genres, genre compatibility, “one loved it, one passed”, and rating gaps.
-- **Discover** – search plus rails for trending, new releases, popular TV, classics, your services and recommendations based on what you both like. Titles you’ve rejected or watched stay hidden (reset any time in Settings).
-- **Installable PWA** – add it to your home screen; both phones stay in sync live.
+- **Discover** – search plus rails for trending, new releases, popular TV, classics, your services and recommendations. Titles you’ve rejected or watched stay hidden (reset any time in Settings).
+- **Installable PWA** – add it to your home screen; both phones stay in sync.
 
-## Try it tonight (same home Wi‑Fi)
+## Put it online for free (Cloudflare)
 
-1. Install **Node.js 22 or newer** from [nodejs.org](https://nodejs.org) on a computer at home.
-2. Download this repo (Code → Download ZIP, or `git clone`), open a terminal in the folder and run:
-   ```bash
-   npm run go
-   ```
-3. The terminal prints something like `On your phones: http://192.168.1.23:8787`. Open that on both phones (same Wi‑Fi). If your computer asks whether to allow incoming connections, say yes.
-4. First phone: follow setup (paste your free [TMDB key](https://www.themoviedb.org/settings/api), names, services). Second phone: just tap “I’m …”.
-5. Optional: Safari → Share → **Add to Home Screen** for a full-screen app icon.
+MovieMatch runs on Cloudflare’s **free plan** — a Worker serves the app and a D1 database stores your watchlist, history and votes. Nothing needs to stay running on your computer, and no credit card is required.
 
-Keep the terminal open while you use it. Next time, just run `npm start`. Your data is saved in the `data` folder.
-
-## How it works
-
-One small Node server (Express + SQLite) serves the app, keeps your TMDB key private, stores your shared data, and pushes live updates to both phones (server‑sent events). There are no accounts — just two player profiles and an optional household passcode.
-
-## Run it
-
-Requires **Node 22.5+** and a free [TMDB API key](https://www.themoviedb.org/settings/api).
+You need: a free [Cloudflare account](https://dash.cloudflare.com/sign-up), a free [TMDB API key](https://www.themoviedb.org/settings/api), and [Node.js](https://nodejs.org) (LTS).
 
 ```bash
 npm install
-npm run build
-TMDB_API_KEY=your_key APP_PASSCODE=something-secret npm start
-# → http://localhost:8787
+npm run deploy
 ```
 
-You can also leave `TMDB_API_KEY` unset and paste the key into the app’s setup screen. Data lives in `./data/moviematch.db` (set `DATA_DIR` to move it).
+`npm run deploy` does everything: opens a browser to log in to Cloudflare, creates the database, builds, deploys, and asks you for a household passcode and your TMDB key. When it finishes it prints your address, like `https://moviematch.<your-name>.workers.dev`.
 
-Development (hot reload on :5173, API on :8787):
+Then on each phone open that address and **Add to Home Screen** (iPhone Safari: Share → Add to Home Screen; Android Chrome: menu → Install app). The first phone runs setup (names, region, streaming services); the second just taps “I’m …”.
+
+To update after changing something, run `npm run deploy` again — your data stays put.
+
+> **Windows tip:** if PowerShell says “running scripts is disabled”, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd run deploy`.
+
+### Free-plan limits (plenty for two people)
+
+Workers Free allows 100,000 requests/day, and D1 Free allows 5 million reads and 100,000 writes/day. A movie night uses a few hundred requests. Two phones left open stay well under the cap, because background tabs stop polling.
+
+## Develop locally
 
 ```bash
-npm run dev
-npm test        # server unit tests
+npm run preview     # build, then run the Worker + local database on http://localhost:8787
+npm run dev         # hot-reloading UI on :5173 with the Worker on :8787
+npm test            # unit tests
 npm run typecheck
 ```
 
-## Put it on your phones
+Local secrets (optional) go in `.dev.vars` — see `.dev.vars.example`.
 
-The two phones need to reach the same server. Pick one:
+## How it works
 
-1. **A computer at home + Tailscale** (simplest and private): run `npm start` on any always‑on machine, install [Tailscale](https://tailscale.com) on it and both phones, then open `http://<machine-name>:8787`. For “Add to Home Screen” to install as an app, use `tailscale serve 8787` to get an HTTPS URL.
-2. **Docker** anywhere with a persistent volume:
-   ```bash
-   docker build -t moviematch .
-   docker run -d -p 8787:8787 -v moviematch-data:/data \
-     -e TMDB_API_KEY=your_key -e APP_PASSCODE=something-secret moviematch
-   ```
-3. **A small cloud host** (Fly.io, Railway, Render with a disk, etc.) using the Dockerfile. Mount a volume at `/data` so your history survives restarts, and set `APP_PASSCODE` since it’ll be on the internet.
+- **Frontend:** React + Vite PWA served as static assets by the Worker.
+- **Backend:** one Cloudflare Worker (Hono) under `/api`, which keeps your TMDB key private, caches titles, and stores everything in D1 (SQLite). Tables are created automatically on first request.
+- **Syncing phones:** the apps poll every few seconds while a movie night is open (and every 20s elsewhere); no always-on connection is needed.
+- **Privacy:** no accounts; an optional passcode (`APP_PASSCODE` secret) protects the whole app.
 
-Then on each phone open the URL → Share → **Add to Home Screen** (iOS Safari) or **Install app** (Android Chrome). The first phone runs setup (names, region, services); the second just picks “I’m …”.
-
-## Configuration
-
-| Variable | Purpose |
+| Setting | Where |
 | --- | --- |
-| `TMDB_API_KEY` / `TMDB_READ_TOKEN` | TMDB v3 key or v4 read token (or enter it in the app) |
-| `APP_PASSCODE` | Optional passcode each phone enters once |
-| `DATA_DIR` | Where the SQLite database is stored (default `./data`) |
-| `PORT` | Server port (default `8787`) |
+| `APP_PASSCODE` | Worker secret (asked by `npm run deploy`) |
+| `TMDB_API_KEY` / `TMDB_READ_TOKEN` | Worker secret, or paste it in the app’s setup screen |
 
 ---
 

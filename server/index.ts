@@ -1,24 +1,21 @@
-import './quiet.ts';
-import express, { type NextFunction, type Request, type Response } from 'express';
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { db, kvGet, kvSet } from './db.ts';
+import { Hono, type Context } from 'hono';
+import { all, batch, ensureSchema, kvAll, kvSet, loadConfig, one, run, stmt } from './db.ts';
+import { bindEnv, type Env } from './env.ts';
 import {
-  IMAGE_BASE,
-  LIST_TTL,
   TmdbError,
+  clearKeyCache,
   fromListItem,
   getDetails,
+  getTitle,
   getTitles,
+  imageBase,
   listProviders,
   rememberListItems,
   snapshot,
   tmdb,
   tmdbConfigured,
   verifyTmdbKey,
+  LIST_TTL,
 } from './tmdb.ts';
 import { discoverParams, shuffle } from './deck.ts';
 import {
@@ -35,7 +32,6 @@ import {
   undoVote,
 } from './sessions.ts';
 import { tasteStats } from './stats.ts';
-import { broadcast, subscribe } from './events.ts';
 import type {
   AppSettings,
   Bootstrap,
@@ -51,67 +47,31 @@ import type {
 } from '../shared/types.ts';
 import { DEFAULT_FILTERS, parseKey } from '../shared/types.ts';
 
-const app = express();
-app.disable('x-powered-by');
-app.use(express.json({ limit: '200kb' }));
+const app = new Hono<{ Bindings: Env }>();
 
 // ---------------------------------------------------------------------------
 // Household passcode (optional)
 
-const PASSCODE = process.env.APP_PASSCODE ?? '';
-const expectedToken = PASSCODE ? crypto.createHash('sha256').update(`moviematch:${PASSCODE}`).digest('hex') : '';
-const tokenOf = (req: Request) => (req.header('x-mm-token') ?? (req.query.token as string | undefined) ?? '').trim();
-const isAuthorized = (req: Request) => {
-  if (!PASSCODE) return true;
-  const t = tokenOf(req);
-  return t.length === expectedToken.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(expectedToken));
-};
+const enc = new TextEncoder();
+async function sha256Hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
-type Handler = (req: Request, res: Response) => Promise<unknown> | unknown;
-const h = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => {
-  Promise.resolve(fn(req, res))
-    .then((out) => {
-      if (!res.headersSent) res.json(out ?? { ok: true });
-    })
-    .catch(next);
-};
+const passcode = (c: Context<{ Bindings: Env }>) => c.env.APP_PASSCODE ?? '';
+const expectedToken = (c: Context<{ Bindings: Env }>) => sha256Hex(`moviematch:${passcode(c)}`);
+async function isAuthorized(c: Context<{ Bindings: Env }>): Promise<boolean> {
+  if (!passcode(c)) return true;
+  return safeEqual((c.req.header('x-mm-token') ?? '').trim(), await expectedToken(c));
+}
 
-const players = (): Player[] => kvGet<Player[]>('players', [
-  { id: 1, name: 'Player 1' },
-  { id: 2, name: 'Player 2' },
-]);
-const settings = (): AppSettings => ({
-  region: kvGet('region', 'US'),
-  services: kvGet<number[]>('services', []),
-  setupComplete: kvGet('setupComplete', false),
-});
-
-const api = express.Router();
-
-api.get('/bootstrap', h((req): Bootstrap => ({
-  authRequired: Boolean(PASSCODE),
-  authorized: isAuthorized(req),
-  tmdbConfigured: tmdbConfigured(),
-  imageBase: IMAGE_BASE,
-  players: isAuthorized(req) ? players() : [],
-  settings: isAuthorized(req) ? settings() : { region: 'US', services: [], setupComplete: false },
-})));
-
-api.post('/auth', h((req) => {
-  const ok = PASSCODE && String(req.body?.passcode ?? '') === PASSCODE;
-  if (!ok) throw new HttpError(401, 'That passcode didn’t work');
-  return { token: expectedToken };
-}));
-
-api.use((req, res, next) => {
-  if (isAuthorized(req)) return next();
-  res.status(401).json({ error: 'Passcode required' });
-});
-
-api.get('/events', (req, res) => subscribe(req, res));
-
-// ---------------------------------------------------------------------------
-// Settings
+const body = async (c: Context<{ Bindings: Env }>) => ((await c.req.json().catch(() => ({}))) ?? {}) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const asPlayer = (v: unknown): PlayerId => {
   const n = Number(v);
@@ -119,151 +79,82 @@ const asPlayer = (v: unknown): PlayerId => {
   return n;
 };
 
-api.put('/settings', h(async (req) => {
-  const b = req.body ?? {};
+const toPlayers = (kv: Record<string, unknown>): Player[] =>
+  (kv.players as Player[] | undefined) ?? [
+    { id: 1, name: 'Player 1' },
+    { id: 2, name: 'Player 2' },
+  ];
+const toSettings = (kv: Record<string, unknown>): AppSettings => ({
+  region: (kv.region as string) ?? 'US',
+  services: (kv.services as number[]) ?? [],
+  setupComplete: (kv.setupComplete as boolean) ?? false,
+});
+
+app.use('/api/*', async (c, next) => {
+  bindEnv(c.env);
+  await ensureSchema();
+  await next();
+});
+
+app.get('/api/bootstrap', async (c) => {
+  const authorized = await isAuthorized(c);
+  const kv = authorized ? await kvAll() : {};
+  const out: Bootstrap = {
+    authRequired: Boolean(passcode(c)),
+    authorized,
+    tmdbConfigured: await tmdbConfigured(),
+    imageBase: imageBase(),
+    players: authorized ? toPlayers(kv) : [],
+    settings: authorized ? toSettings(kv) : { region: 'US', services: [], setupComplete: false },
+  };
+  return c.json(out);
+});
+
+app.post('/api/auth', async (c) => {
+  const b = await body(c);
+  if (!passcode(c) || String(b.passcode ?? '') !== passcode(c)) throw new HttpError(401, 'That passcode didn’t work');
+  return c.json({ token: await expectedToken(c) });
+});
+
+app.use('/api/*', async (c, next) => {
+  if (await isAuthorized(c)) return next();
+  return c.json({ error: 'Passcode required' }, 401);
+});
+
+// ---------------------------------------------------------------------------
+// Settings
+
+app.put('/api/settings', async (c) => {
+  const b = await body(c);
   if (typeof b.tmdbKey === 'string' && b.tmdbKey.trim()) {
     const key = b.tmdbKey.trim();
     if (!(await verifyTmdbKey(key))) throw new HttpError(400, 'TMDB didn’t accept that key. Double-check it and try again.');
-    kvSet('tmdbKey', key);
+    await kvSet('tmdbKey', key);
+    clearKeyCache();
   }
   if (Array.isArray(b.players)) {
     const names = b.players.map((p: { name?: string }) => String(p?.name ?? '').trim().slice(0, 24));
-    kvSet('players', [
+    await kvSet('players', [
       { id: 1, name: names[0] || 'Player 1' },
       { id: 2, name: names[1] || 'Player 2' },
     ]);
   }
-  if (typeof b.region === 'string' && /^[A-Z]{2}$/.test(b.region)) kvSet('region', b.region);
-  if (Array.isArray(b.services)) kvSet('services', b.services.map(Number).filter(Number.isFinite).slice(0, 40));
-  if (typeof b.setupComplete === 'boolean') kvSet('setupComplete', b.setupComplete);
-  broadcast('settings');
-  return { players: players(), settings: settings(), tmdbConfigured: tmdbConfigured() };
-}));
+  if (typeof b.region === 'string' && /^[A-Z]{2}$/.test(b.region)) await kvSet('region', b.region);
+  if (Array.isArray(b.services)) await kvSet('services', b.services.map(Number).filter(Number.isFinite).slice(0, 40));
+  if (typeof b.setupComplete === 'boolean') await kvSet('setupComplete', b.setupComplete);
+  const kv = await kvAll();
+  return c.json({ players: toPlayers(kv), settings: toSettings(kv), tmdbConfigured: await tmdbConfigured() });
+});
 
-api.get('/providers', h(async (req) => listProviders(String(req.query.region ?? settings().region))));
+app.get('/api/providers', async (c) => c.json(await listProviders(c.req.query('region') ?? (await loadConfig()).region)));
 
-api.post('/reset-discovery', h(() => {
-  kvSet('discoveryResetAt', new Date().toISOString());
-  return { ok: true };
-}));
-
-// ---------------------------------------------------------------------------
-// Titles, search and browsing
-
-function personalState(key: string) {
-  const wl = db.prepare('SELECT * FROM watchlist WHERE key = ?').get(key) as WatchlistRow | undefined;
-  const w = db.prepare('SELECT * FROM watched WHERE key = ?').get(key) as WatchedRow | undefined;
-  return { watchlist: wl ? toWatchlist(wl) : null, watched: w ? toWatched(w) : null };
-}
-
-api.get('/titles/:key', h(async (req) => {
-  const key = String(req.params.key);
-  const details = await getDetails(key);
-  const history = db
-    .prepare(
-      `SELECT s.id, s.created_at, v.player, v.vote FROM votes v JOIN sessions s ON s.id = v.session_id
-       WHERE v.key = ? AND s.status = 'complete' ORDER BY s.created_at DESC`,
-    )
-    .all(key) as { id: string; created_at: string; player: PlayerId; vote: Vote }[];
-  const bySession = new Map<string, { sessionId: string; date: string; votes: Partial<Record<PlayerId, Vote>> }>();
-  for (const r of history) {
-    const e = bySession.get(r.id) ?? { sessionId: r.id, date: r.created_at, votes: {} };
-    e.votes[r.player] = r.vote;
-    bySession.set(r.id, e);
-  }
-  return { details, state: personalState(key), history: [...bySession.values()] };
-}));
-
-const keepMedia = (list: (Title | null)[]) => list.filter((t): t is Title => Boolean(t && t.poster));
-
-api.get('/search', h(async (req) => {
-  const q = String(req.query.q ?? '').trim();
-  if (!q) return [];
-  const data = await tmdb<{ results: unknown[] }>('/search/multi', { query: q, include_adult: 'false' }, 10 * 60 * 1000);
-  const items = keepMedia(data.results.map((r) => fromListItem(r)));
-  rememberListItems(items);
-  return items;
-}));
-
-function browseExclusions(): Set<string> {
-  const out = new Set<string>();
-  for (const r of db.prepare('SELECT key FROM watched').all() as { key: string }[]) out.add(r.key);
-  const resetAt = kvGet('discoveryResetAt', '1970-01-01');
-  for (const r of db.prepare("SELECT DISTINCT key FROM votes WHERE vote = 'no' AND voted_at > ?").all(resetAt) as { key: string }[]) out.add(r.key);
-  return out;
-}
-
-async function listOf(path: string, params: Record<string, string | number | undefined>, type?: MediaType): Promise<Title[]> {
-  try {
-    const data = await tmdb<{ results: unknown[] }>(path, params, LIST_TTL);
-    return keepMedia(data.results.map((r) => fromListItem(r, type)));
-  } catch (e) {
-    if (e instanceof TmdbError && e.status === 503) throw e;
-    return [];
-  }
-}
-
-async function forYou(): Promise<Title[]> {
-  const seeds = (
-    db
-      .prepare(
-        `SELECT key FROM (
-           SELECT key, 3 AS w FROM watched WHERE COALESCE(rating1, 0) + COALESCE(rating2, 0) >= 7
-           UNION ALL SELECT key, 2 FROM watchlist WHERE section = 'both'
-           UNION ALL SELECT v.key, 1 FROM votes v GROUP BY v.session_id, v.key HAVING SUM(v.vote = 'yes') >= 2
-         ) GROUP BY key ORDER BY MAX(w) DESC, RANDOM() LIMIT 12`,
-      )
-      .all() as { key: string }[]
-  ).map((r) => r.key);
-  const picks = shuffle(seeds).slice(0, 3);
-  const lists = await Promise.all(
-    picks.map((k) => {
-      const p = parseKey(k)!;
-      return listOf(`/${p.type}/${p.id}/recommendations`, {}, p.type);
-    }),
-  );
-  const merged: Title[] = [];
-  const seen = new Set<string>(seeds);
-  for (let i = 0; merged.length < 30 && lists.some((l) => l[i]); i++)
-    for (const l of lists) if (l[i] && !seen.has(l[i].key)) (seen.add(l[i].key), merged.push(l[i]));
-  return merged;
-}
-
-api.get('/rails', h(async (): Promise<Rails> => {
-  const today = new Date();
-  const monthsAgo = (n: number) => new Date(today.getFullYear(), today.getMonth() - n, today.getDate()).toISOString().slice(0, 10);
-  const s = settings();
-  const [trending, newReleases, popularTv, classics, onOurServices, recs] = await Promise.all([
-    listOf('/trending/all/week', {}),
-    listOf('/discover/movie', {
-      sort_by: 'popularity.desc', 'vote_count.gte': 40, 'primary_release_date.gte': monthsAgo(6), 'primary_release_date.lte': today.toISOString().slice(0, 10),
-      watch_region: s.region, with_watch_monetization_types: 'flatrate|rent|buy',
-    }, 'movie'),
-    listOf('/discover/tv', { sort_by: 'popularity.desc', 'vote_count.gte': 150, without_genres: '10763,10764,10766,10767' }, 'tv'),
-    listOf('/discover/movie', { sort_by: 'vote_average.desc', 'vote_count.gte': 4000, 'primary_release_date.lte': '1999-12-31', page: 1 + (today.getDate() % 3) }, 'movie'),
-    s.services.length
-      ? listOf('/discover/movie', { ...discoverParams('movie', { ...DEFAULT_FILTERS, onlyMyServices: true }), page: 1 + (today.getDate() % 2) }, 'movie')
-      : Promise.resolve([]),
-    forYou(),
-  ]);
-  const ex = browseExclusions();
-  const clean = (l: Title[]) => {
-    const out = l.filter((t) => !ex.has(t.key));
-    rememberListItems(out);
-    return out;
-  };
-  return {
-    forYou: clean(recs),
-    trending: clean(trending),
-    newReleases: clean(newReleases),
-    popularTv: clean(popularTv),
-    classics: clean(classics),
-    onOurServices: clean(onOurServices),
-  };
-}));
+app.post('/api/reset-discovery', async (c) => {
+  await kvSet('discoveryResetAt', new Date().toISOString());
+  return c.json({ ok: true });
+});
 
 // ---------------------------------------------------------------------------
-// Watchlist & watched
+// Watchlist & watched rows
 
 interface WatchlistRow { key: string; section: WatchlistSection; added_at: string; added_by: PlayerId | null; session_id: string | null }
 interface WatchedRow { key: string; watched_at: string; rating1: number | null; rating2: number | null; session_id: string | null }
@@ -280,82 +171,205 @@ const SECTION_RANK: Record<WatchlistSection, number> = { both: 3, maybe: 2, save
 
 async function ensureTitle(key: string) {
   if (!parseKey(key)) throw new HttpError(400, 'Bad title key');
-  await getDetails(key);
+  await getTitle(key, (await loadConfig()).region);
 }
 
-api.get('/watchlist', h(async () => {
-  const rows = db.prepare('SELECT * FROM watchlist ORDER BY added_at DESC').all() as unknown as WatchlistRow[];
-  const entries = rows.map(toWatchlist);
-  return { entries, titles: await getTitles(entries.map((e) => e.key)) };
-}));
+// ---------------------------------------------------------------------------
+// Titles, search and browsing
 
-api.post('/watchlist', h(async (req) => {
-  const items: { key: string; section?: WatchlistSection }[] = Array.isArray(req.body?.items) ? req.body.items : [req.body];
-  const by = req.body?.addedBy ? asPlayer(req.body.addedBy) : null;
-  const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : null;
-  for (const it of items) {
-    const section: WatchlistSection = it.section === 'both' || it.section === 'maybe' ? it.section : 'saved';
-    await ensureTitle(String(it.key));
-    const existing = db.prepare('SELECT section FROM watchlist WHERE key = ?').get(it.key) as { section: WatchlistSection } | undefined;
-    // Never downgrade "both want to watch" to a weaker section.
-    if (existing && SECTION_RANK[existing.section] >= SECTION_RANK[section] && !req.body?.force) continue;
-    db.prepare(
-      `INSERT INTO watchlist (key, section, added_at, added_by, session_id) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET section = excluded.section`,
-    ).run(it.key, section, new Date().toISOString(), by, sessionId);
+app.get('/api/titles/:key', async (c) => {
+  const key = c.req.param('key');
+  const cfg = await loadConfig();
+  const [details, wl, w, history] = await Promise.all([
+    getDetails(key, cfg.region),
+    one<WatchlistRow>('SELECT * FROM watchlist WHERE key = ?', key),
+    one<WatchedRow>('SELECT * FROM watched WHERE key = ?', key),
+    all<{ id: string; created_at: string; player: PlayerId; vote: Vote }>(
+      `SELECT s.id, s.created_at, v.player, v.vote FROM votes v JOIN sessions s ON s.id = v.session_id
+       WHERE v.key = ? AND s.status = 'complete' ORDER BY s.created_at DESC`,
+      key,
+    ),
+  ]);
+  const bySession = new Map<string, { sessionId: string; date: string; votes: Partial<Record<PlayerId, Vote>> }>();
+  for (const r of history) {
+    const e = bySession.get(r.id) ?? { sessionId: r.id, date: r.created_at, votes: {} };
+    e.votes[r.player] = r.vote;
+    bySession.set(r.id, e);
   }
-  broadcast('watchlist');
-  return { ok: true };
-}));
+  return c.json({ details, state: { watchlist: wl ? toWatchlist(wl) : null, watched: w ? toWatched(w) : null }, history: [...bySession.values()] });
+});
 
-api.delete('/watchlist/:key', h((req) => {
-  db.prepare('DELETE FROM watchlist WHERE key = ?').run(String(req.params.key));
-  broadcast('watchlist');
-}));
+app.post('/api/titles/batch', async (c) => {
+  const b = await body(c);
+  return c.json(await getTitles(((b.keys ?? []) as unknown[]).map(String).slice(0, 200), (await loadConfig()).region));
+});
 
-api.get('/watched', h(async () => {
-  const rows = db.prepare('SELECT * FROM watched ORDER BY watched_at DESC').all() as unknown as WatchedRow[];
-  const entries = rows.map(toWatched);
-  return { entries, titles: await getTitles(entries.map((e) => e.key)) };
-}));
+app.post('/api/titles/:key/refresh', async (c) => {
+  const cfg = await loadConfig();
+  await run('UPDATE titles SET updated_at = 0 WHERE key = ?', c.req.param('key'));
+  return c.json(snapshot(await getDetails(c.req.param('key'), cfg.region)));
+});
 
-api.post('/watched', h(async (req) => {
-  const key = String(req.body?.key ?? '');
+const keepMedia = (list: (Title | null)[]) => list.filter((t): t is Title => Boolean(t && t.poster));
+
+app.get('/api/search', async (c) => {
+  const q = (c.req.query('q') ?? '').trim();
+  if (!q) return c.json([]);
+  const data = await tmdb<{ results: unknown[] }>('/search/multi', { query: q, include_adult: 'false' }, 10 * 60 * 1000);
+  const items = keepMedia(data.results.map((r) => fromListItem(r)));
+  await rememberListItems(items);
+  return c.json(items);
+});
+
+async function listOf(path: string, params: Record<string, string | number | undefined>, type?: MediaType): Promise<Title[]> {
+  try {
+    const data = await tmdb<{ results: unknown[] }>(path, params, LIST_TTL);
+    return keepMedia(data.results.map((r) => fromListItem(r, type)));
+  } catch (e) {
+    if (e instanceof TmdbError && e.status === 503) throw e;
+    return [];
+  }
+}
+
+async function forYou(): Promise<Title[]> {
+  const seeds = (
+    await all<{ key: string }>(
+      `SELECT key FROM (
+         SELECT key, 3 AS w FROM watched WHERE COALESCE(rating1, 0) + COALESCE(rating2, 0) >= 7
+         UNION ALL SELECT key, 2 FROM watchlist WHERE section = 'both'
+         UNION ALL SELECT v.key, 1 FROM votes v GROUP BY v.session_id, v.key HAVING SUM(v.vote = 'yes') >= 2
+       ) GROUP BY key ORDER BY MAX(w) DESC, RANDOM() LIMIT 12`,
+    )
+  ).map((r) => r.key);
+  const picks = shuffle(seeds).slice(0, 3);
+  const lists = await Promise.all(
+    picks.map((k) => {
+      const p = parseKey(k)!;
+      return listOf(`/${p.type}/${p.id}/recommendations`, {}, p.type);
+    }),
+  );
+  const merged: Title[] = [];
+  const seen = new Set<string>(seeds);
+  for (let i = 0; merged.length < 30 && lists.some((l) => l[i]); i++)
+    for (const l of lists) if (l[i] && !seen.has(l[i].key)) (seen.add(l[i].key), merged.push(l[i]));
+  return merged;
+}
+
+app.get('/api/rails', async (c) => {
+  const today = new Date();
+  const monthsAgo = (n: number) => new Date(today.getFullYear(), today.getMonth() - n, today.getDate()).toISOString().slice(0, 10);
+  const cfg = await loadConfig();
+  const [trending, newReleases, popularTv, classics, onOurServices, recs] = await Promise.all([
+    listOf('/trending/all/week', {}),
+    listOf('/discover/movie', {
+      sort_by: 'popularity.desc', 'vote_count.gte': 40, 'primary_release_date.gte': monthsAgo(6), 'primary_release_date.lte': today.toISOString().slice(0, 10),
+      watch_region: cfg.region, with_watch_monetization_types: 'flatrate|rent|buy',
+    }, 'movie'),
+    listOf('/discover/tv', { sort_by: 'popularity.desc', 'vote_count.gte': 150, without_genres: '10763,10764,10766,10767' }, 'tv'),
+    listOf('/discover/movie', { sort_by: 'vote_average.desc', 'vote_count.gte': 4000, 'primary_release_date.lte': '1999-12-31', page: 1 + (today.getDate() % 3) }, 'movie'),
+    cfg.services.length
+      ? listOf('/discover/movie', { ...discoverParams('movie', { ...DEFAULT_FILTERS, onlyMyServices: true }, cfg), page: 1 + (today.getDate() % 2) }, 'movie')
+      : Promise.resolve([]),
+    forYou(),
+  ]);
+  const ex = new Set((await all<{ key: string }>(`SELECT key FROM watched UNION SELECT key FROM votes WHERE vote = 'no' AND voted_at > ?`, cfg.resetAt)).map((r) => r.key));
+  const clean = (l: Title[]) => l.filter((t) => !ex.has(t.key));
+  const out: Rails = {
+    forYou: clean(recs),
+    trending: clean(trending),
+    newReleases: clean(newReleases),
+    popularTv: clean(popularTv),
+    classics: clean(classics),
+    onOurServices: clean(onOurServices),
+  };
+  await rememberListItems(Object.values(out).flat());
+  return c.json(out);
+});
+
+// ---------------------------------------------------------------------------
+// Watchlist & watched
+
+app.get('/api/watchlist', async (c) => {
+  const entries = (await all<WatchlistRow>('SELECT * FROM watchlist ORDER BY added_at DESC')).map(toWatchlist);
+  return c.json({ entries, titles: await getTitles(entries.map((e) => e.key), (await loadConfig()).region) });
+});
+
+app.post('/api/watchlist', async (c) => {
+  const b = await body(c);
+  const items: { key: string; section?: WatchlistSection }[] = Array.isArray(b.items) ? b.items : [b as { key: string }];
+  const by = b.addedBy ? asPlayer(b.addedBy) : null;
+  const sessionId = typeof b.sessionId === 'string' ? b.sessionId : null;
+  const existing = new Map((await all<{ key: string; section: WatchlistSection }>('SELECT key, section FROM watchlist')).map((r) => [r.key, r.section]));
+  const writes = [];
+  for (const it of items) {
+    const key = String(it.key);
+    const section: WatchlistSection = it.section === 'both' || it.section === 'maybe' ? it.section : 'saved';
+    const had = existing.get(key);
+    // Never downgrade "both want to watch" to a weaker section.
+    if (had && SECTION_RANK[had] >= SECTION_RANK[section] && !b.force) continue;
+    await ensureTitle(key);
+    writes.push(
+      stmt(
+        `INSERT INTO watchlist (key, section, added_at, added_by, session_id) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET section = excluded.section`,
+        key, section, new Date().toISOString(), by, sessionId,
+      ),
+    );
+  }
+  await batch(writes);
+  return c.json({ ok: true });
+});
+
+app.delete('/api/watchlist/:key', async (c) => {
+  await run('DELETE FROM watchlist WHERE key = ?', c.req.param('key'));
+  return c.json({ ok: true });
+});
+
+app.get('/api/watched', async (c) => {
+  const entries = (await all<WatchedRow>('SELECT * FROM watched ORDER BY watched_at DESC')).map(toWatched);
+  return c.json({ entries, titles: await getTitles(entries.map((e) => e.key), (await loadConfig()).region) });
+});
+
+app.post('/api/watched', async (c) => {
+  const b = await body(c);
+  const key = String(b.key ?? '');
   await ensureTitle(key);
-  const when = typeof req.body?.watchedAt === 'string' ? new Date(req.body.watchedAt).toISOString() : new Date().toISOString();
-  db.prepare(
-    `INSERT INTO watched (key, watched_at, session_id) VALUES (?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET watched_at = excluded.watched_at, session_id = COALESCE(excluded.session_id, watched.session_id)`,
-  ).run(key, when, typeof req.body?.sessionId === 'string' ? req.body.sessionId : null);
-  // Watched titles leave the watchlist automatically.
-  db.prepare('DELETE FROM watchlist WHERE key = ?').run(key);
-  broadcast('watched');
-  broadcast('watchlist');
-}));
+  const when = typeof b.watchedAt === 'string' ? new Date(b.watchedAt).toISOString() : new Date().toISOString();
+  await batch([
+    stmt(
+      `INSERT INTO watched (key, watched_at, session_id) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET watched_at = excluded.watched_at, session_id = COALESCE(excluded.session_id, watched.session_id)`,
+      key, when, typeof b.sessionId === 'string' ? b.sessionId : null,
+    ),
+    // Watched titles leave the watchlist automatically.
+    stmt('DELETE FROM watchlist WHERE key = ?', key),
+  ]);
+  return c.json({ ok: true });
+});
 
-api.put('/watched/:key/rating', h((req) => {
-  const player = asPlayer(req.body?.player);
-  const raw = req.body?.rating;
-  const rating = raw == null ? null : Math.max(0.5, Math.min(5, Math.round(Number(raw) * 2) / 2));
-  const res = db.prepare(`UPDATE watched SET rating${player} = ? WHERE key = ?`).run(rating, String(req.params.key));
-  if (!res.changes) throw new HttpError(404, 'Mark it as watched first');
-  broadcast('watched');
-}));
+app.put('/api/watched/:key/rating', async (c) => {
+  const b = await body(c);
+  const player = asPlayer(b.player);
+  const rating = b.rating == null ? null : Math.max(0.5, Math.min(5, Math.round(Number(b.rating) * 2) / 2));
+  const changes = await run(`UPDATE watched SET rating${player} = ? WHERE key = ?`, rating, c.req.param('key'));
+  if (!changes) throw new HttpError(404, 'Mark it as watched first');
+  return c.json({ ok: true });
+});
 
-api.delete('/watched/:key', h((req) => {
-  db.prepare('DELETE FROM watched WHERE key = ?').run(String(req.params.key));
-  broadcast('watched');
-}));
+app.delete('/api/watched/:key', async (c) => {
+  await run('DELETE FROM watched WHERE key = ?', c.req.param('key'));
+  return c.json({ ok: true });
+});
 
 // ---------------------------------------------------------------------------
 // Movie nights
 
-api.get('/sessions', h(() => listSessions()));
-api.get('/sessions/active', h(() => activeSessions()));
-api.get('/sessions/code/:code', h((req) => ({ id: findByCode(String(req.params.code)) })));
+app.get('/api/sessions', async (c) => c.json(await listSessions()));
+app.get('/api/sessions/active', async (c) => c.json(await activeSessions()));
+app.get('/api/sessions/code/:code', async (c) => c.json({ id: await findByCode(c.req.param('code')) }));
 
-api.post('/sessions', h(async (req) => {
-  const b = req.body ?? {};
+app.post('/api/sessions', async (c) => {
+  const b = await body(c);
   const createdBy = asPlayer(b.createdBy ?? 1);
   const id = await createSession({
     mode: b.mode === 'duo' ? 'duo' : 'pass',
@@ -363,93 +377,53 @@ api.post('/sessions', h(async (req) => {
     createdBy,
     firstPlayer: b.firstPlayer ? asPlayer(b.firstPlayer) : createdBy,
   });
-  broadcast('session', { id });
-  return { id };
-}));
-
-api.get('/sessions/:id', h((req) => getSession(String(req.params.id))));
-
-api.post('/sessions/:id/votes', h((req) => {
-  const vote = req.body?.vote as Vote;
-  if (!['yes', 'no', 'maybe'].includes(vote)) throw new HttpError(400, 'Bad vote');
-  castVote(String(req.params.id), asPlayer(req.body?.player), String(req.body?.key), vote);
-  broadcast('session', { id: req.params.id });
-}));
-
-api.delete('/sessions/:id/votes', h((req) => {
-  undoVote(String(req.params.id), asPlayer(req.body?.player), String(req.body?.key));
-  broadcast('session', { id: req.params.id });
-}));
-
-api.post('/sessions/:id/more', h(async (req) => {
-  await dealMore(String(req.params.id), Number(req.body?.count ?? 10));
-  broadcast('session', { id: req.params.id });
-}));
-
-api.post('/sessions/:id/choose', h((req) => {
-  const key = req.body?.key ? String(req.body.key) : null;
-  chooseTitle(String(req.params.id), key);
-  broadcast('session', { id: req.params.id });
-}));
-
-api.delete('/sessions/:id', h((req) => {
-  deleteSession(String(req.params.id));
-  broadcast('session', { id: req.params.id });
-}));
-
-api.get('/stats', h(() => tasteStats()));
-
-// Small helper so the client can render stored snapshots in bulk.
-api.post('/titles/batch', h(async (req) => getTitles((req.body?.keys ?? []).map(String).slice(0, 200))));
-
-api.post('/titles/:key/refresh', h(async (req) => snapshot(await getDetails(String(req.params.key), { force: true }))));
-
-api.use((_req, res) => {
-  res.status(404).json({ error: 'Not found' });
+  return c.json({ id });
 });
 
-app.use('/api', api);
+app.get('/api/sessions/:id', async (c) => c.json(await getSession(c.req.param('id'))));
 
-// ---------------------------------------------------------------------------
-// Static client (production)
+app.post('/api/sessions/:id/votes', async (c) => {
+  const b = await body(c);
+  if (!['yes', 'no', 'maybe'].includes(b.vote)) throw new HttpError(400, 'Bad vote');
+  await castVote(c.req.param('id'), asPlayer(b.player), String(b.key), b.vote as Vote);
+  return c.json({ ok: true });
+});
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
-if (fs.existsSync(root)) {
-  app.use(
-    express.static(root, {
-      index: false,
-      setHeaders(res, file) {
-        if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        else res.setHeader('Cache-Control', 'no-cache');
-      },
-    }),
-  );
-  app.get('*', (_req, res) => {
-    res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(path.join(root, 'index.html'));
-  });
-}
+app.delete('/api/sessions/:id/votes', async (c) => {
+  const b = await body(c);
+  await undoVote(c.req.param('id'), asPlayer(b.player), String(b.key));
+  return c.json({ ok: true });
+});
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+app.post('/api/sessions/:id/more', async (c) => {
+  const b = await body(c);
+  await dealMore(c.req.param('id'), Number(b.count ?? 10));
+  return c.json({ ok: true });
+});
+
+app.post('/api/sessions/:id/choose', async (c) => {
+  const b = await body(c);
+  await chooseTitle(c.req.param('id'), b.key ? String(b.key) : null);
+  return c.json({ ok: true });
+});
+
+app.delete('/api/sessions/:id', async (c) => {
+  await deleteSession(c.req.param('id'));
+  return c.json({ ok: true });
+});
+
+app.get('/api/stats', async (c) => c.json(await tasteStats()));
+
+app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
+
+app.onError((err, c) => {
   if (err instanceof HttpError || err instanceof TmdbError) {
-    const status = err instanceof TmdbError && err.status === 401 ? 502 : err.status;
-    const message = err instanceof TmdbError && err.status === 401 ? 'TMDB rejected our API key' : err.message;
-    res.status(status).json({ error: message });
-    return;
+    const rejected = err instanceof TmdbError && err.status === 401;
+    const status = (rejected ? 502 : err.status) as 400 | 401 | 404 | 409 | 422 | 502 | 503;
+    return c.json({ error: rejected ? 'TMDB rejected our API key' : err.message }, status);
   }
   console.error(err);
-  res.status(500).json({ error: 'Something went wrong' });
+  return c.json({ error: 'Something went wrong' }, 500);
 });
 
-const port = Number(process.env.PORT ?? 8787);
-app.listen(port, () => {
-  console.log(`\n🍿 MovieMatch is running!\n   On this computer:  http://localhost:${port}`);
-  const lan = Object.values(os.networkInterfaces())
-    .flat()
-    .filter((i) => i && i.family === 'IPv4' && !i.internal)
-    .map((i) => i!.address);
-  for (const ip of lan) console.log(`   On your phones:    http://${ip}:${port}   (same Wi-Fi)`);
-  console.log('');
-  if (!tmdbConfigured()) console.log('   TMDB key not set yet — add it in the app or via TMDB_API_KEY.');
-});
+export default app;

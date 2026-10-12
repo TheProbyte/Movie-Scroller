@@ -1,11 +1,14 @@
-import { db, kvGet } from './db.ts';
+import { chunk, kvGet, one, all, placeholders, stmt, batch, run } from './db.ts';
+import { env, type D1Stmt } from './env.ts';
 import type { Availability, MediaType, Person, Provider, Title, TitleDetails } from '../shared/types.ts';
 import { parseKey, titleKey } from '../shared/types.ts';
 
-const BASE = process.env.TMDB_BASE_URL ?? 'https://api.themoviedb.org/3';
-export const IMAGE_BASE = process.env.TMDB_IMAGE_BASE ?? 'https://image.tmdb.org/t/p';
+const DEFAULT_BASE = 'https://api.themoviedb.org/3';
+const DEFAULT_IMAGES = 'https://image.tmdb.org/t/p';
 const DETAILS_TTL_MS = 3 * 24 * 60 * 60 * 1000;
-const LIST_TTL_MS = 60 * 60 * 1000;
+export const LIST_TTL = 60 * 60 * 1000;
+
+export const imageBase = () => env().TMDB_IMAGE_BASE ?? DEFAULT_IMAGES;
 
 export class TmdbError extends Error {
   constructor(message: string, readonly status = 502) {
@@ -13,27 +16,33 @@ export class TmdbError extends Error {
   }
 }
 
-function credentials(): { apiKey?: string; token?: string } {
-  const token = process.env.TMDB_READ_TOKEN || undefined;
-  const apiKey = process.env.TMDB_API_KEY || undefined;
-  if (token || apiKey) return { token, apiKey };
-  const stored = kvGet<string>('tmdbKey', '');
+// The stored key is read from the database; keep it for a bit instead of querying every call.
+let keyCache: { value: string; at: number } | null = null;
+export const clearKeyCache = () => {
+  keyCache = null;
+};
+
+async function credentials(): Promise<{ apiKey?: string; token?: string }> {
+  const e = env();
+  if (e.TMDB_READ_TOKEN || e.TMDB_API_KEY) return { token: e.TMDB_READ_TOKEN || undefined, apiKey: e.TMDB_API_KEY || undefined };
+  if (!keyCache || Date.now() - keyCache.at > 30_000) keyCache = { value: await kvGet<string>('tmdbKey', ''), at: Date.now() };
+  const stored = keyCache.value;
   if (!stored) return {};
   // v4 read tokens are long JWTs, v3 keys are 32 hex chars.
   return stored.length > 40 ? { token: stored } : { apiKey: stored };
 }
 
-export const tmdbConfigured = () => {
-  const c = credentials();
+export async function tmdbConfigured(): Promise<boolean> {
+  const c = await credentials();
   return Boolean(c.apiKey || c.token);
-};
+}
 
 const listCache = new Map<string, { at: number; data: unknown }>();
 
 export async function tmdb<T>(path: string, params: Record<string, string | number | undefined> = {}, cacheMs = 0): Promise<T> {
-  const { apiKey, token } = credentials();
+  const { apiKey, token } = await credentials();
   if (!apiKey && !token) throw new TmdbError('TMDB is not configured yet', 503);
-  const url = new URL(BASE + path);
+  const url = new URL((env().TMDB_BASE_URL ?? DEFAULT_BASE) + path);
   url.searchParams.set('language', 'en-US');
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
   const cacheKey = url.toString();
@@ -45,23 +54,23 @@ export async function tmdb<T>(path: string, params: Record<string, string | numb
   const headers: Record<string, string> = { accept: 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
 
-  let res: Response | undefined;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Workers on the free plan allow 50 outbound requests per call, so retry sparingly.
+  let res = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
+  if (res.status === 429) {
+    await new Promise((r) => setTimeout(r, 700));
     res = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
-    if (res.status !== 429) break;
-    await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
   }
-  if (!res!.ok) {
-    const status = res!.status === 401 ? 401 : res!.status === 404 ? 404 : 502;
-    throw new TmdbError(`TMDB ${res!.status} for ${path}`, status);
+  if (!res.ok) throw new TmdbError(`TMDB ${res.status} for ${path}`, res.status === 401 ? 401 : res.status === 404 ? 404 : 502);
+  const data = (await res.json()) as T;
+  if (cacheMs) {
+    if (listCache.size > 150) listCache.clear();
+    listCache.set(cacheKey, { at: Date.now(), data });
   }
-  const data = (await res!.json()) as T;
-  if (cacheMs) listCache.set(cacheKey, { at: Date.now(), data });
   return data;
 }
 
 export async function verifyTmdbKey(key: string): Promise<boolean> {
-  const url = new URL(BASE + '/configuration');
+  const url = new URL((env().TMDB_BASE_URL ?? DEFAULT_BASE) + '/configuration');
   const headers: Record<string, string> = {};
   if (key.length > 40) headers.authorization = `Bearer ${key}`;
   else url.searchParams.set('api_key', key);
@@ -113,7 +122,8 @@ export function fromListItem(r: any, fallbackType?: MediaType): Title | null {
 const provider = (p: any): Provider => ({ id: p.provider_id, name: p.provider_name, logo: p.logo_path ?? null });
 
 function availability(raw: any, region: string): Availability | null {
-  const r = raw?.results?.[region];
+  if (!raw) return null;
+  const r = raw.results?.[region];
   if (!r) return { link: null, stream: [], free: [], rent: [], buy: [] };
   const uniq = (list: any[] = []) => {
     const seen = new Set<number>();
@@ -128,7 +138,8 @@ function availability(raw: any, region: string): Availability | null {
   };
 }
 
-function fromDetails(d: any, type: MediaType, region: string): TitleDetails {
+/** Handles both the light card fetch and the full details fetch; missing sections are simply empty. */
+function toDetails(d: any, type: MediaType, region: string): TitleDetails {
   const videos: any[] = d.videos?.results ?? [];
   const trailer =
     videos.find((v) => v.site === 'YouTube' && v.type === 'Trailer' && v.official) ??
@@ -137,10 +148,12 @@ function fromDetails(d: any, type: MediaType, region: string): TitleDetails {
 
   let certification: string | null = null;
   if (type === 'movie') {
-    const rel = d.release_dates?.results?.find((x: any) => x.iso_3166_1 === region) ?? d.release_dates?.results?.find((x: any) => x.iso_3166_1 === 'US');
+    const res = d.release_dates?.results;
+    const rel = res?.find((x: any) => x.iso_3166_1 === region) ?? res?.find((x: any) => x.iso_3166_1 === 'US');
     certification = rel?.release_dates?.find((x: any) => x.certification)?.certification || null;
   } else {
-    const cr = d.content_ratings?.results?.find((x: any) => x.iso_3166_1 === region) ?? d.content_ratings?.results?.find((x: any) => x.iso_3166_1 === 'US');
+    const res = d.content_ratings?.results;
+    const cr = res?.find((x: any) => x.iso_3166_1 === region) ?? res?.find((x: any) => x.iso_3166_1 === 'US');
     certification = cr?.rating || null;
   }
 
@@ -185,62 +198,80 @@ export function snapshot(d: TitleDetails): Title {
 }
 
 // ---------------------------------------------------------------------------
-// Title cache
+// Title cache. Cards use a light fetch (base info + streaming); the details
+// sheet loads the heavy extras (cast, trailer, ratings) on demand. That keeps
+// building a deck cheap enough for Cloudflare's free-plan limits.
 
-const region = () => kvGet<string>('region', 'US');
+const UPSERT_CARD = `INSERT INTO titles (key, data, details, region, updated_at) VALUES (?, ?, NULL, ?, ?)
+  ON CONFLICT(key) DO UPDATE SET data = excluded.data, region = excluded.region, updated_at = excluded.updated_at`;
 
-export async function getDetails(key: string, opts: { force?: boolean } = {}): Promise<TitleDetails> {
+/** Light card data. Pass `writes` to defer the cache write into a batch. */
+export async function getTitle(key: string, region: string, writes?: D1Stmt[]): Promise<Title> {
   const parsed = parseKey(key);
   if (!parsed) throw new TmdbError('Bad title key', 400);
-  const reg = region();
-  const row = db.prepare('SELECT details, region, updated_at FROM titles WHERE key = ?').get(key) as
-    | { details: string | null; region: string | null; updated_at: number }
-    | undefined;
-  if (!opts.force && row?.details && row.region === reg && Date.now() - row.updated_at < DETAILS_TTL_MS) {
-    return JSON.parse(row.details) as TitleDetails;
+  const row = await one<{ data: string; region: string | null; updated_at: number }>('SELECT data, region, updated_at FROM titles WHERE key = ?', key);
+  if (row && row.updated_at > 0 && row.region === region && Date.now() - row.updated_at < DETAILS_TTL_MS) return JSON.parse(row.data) as Title;
+  try {
+    const raw = await tmdb(`/${parsed.type}/${parsed.id}`, { append_to_response: 'watch/providers' });
+    const t = snapshot(toDetails(raw, parsed.type, region));
+    const w = stmt(UPSERT_CARD, key, JSON.stringify(t), region, Date.now());
+    if (writes) writes.push(w);
+    else await w.run();
+    return t;
+  } catch (e) {
+    if (row) return JSON.parse(row.data) as Title; // serve stale rather than fail
+    throw e;
   }
+}
+
+export async function getDetails(key: string, region: string): Promise<TitleDetails> {
+  const parsed = parseKey(key);
+  if (!parsed) throw new TmdbError('Bad title key', 400);
+  const row = await one<{ details: string | null; region: string | null; updated_at: number }>('SELECT details, region, updated_at FROM titles WHERE key = ?', key);
+  if (row?.details && row.region === region && Date.now() - row.updated_at < DETAILS_TTL_MS) return JSON.parse(row.details) as TitleDetails;
   try {
     const append = parsed.type === 'movie' ? 'videos,credits,watch/providers,release_dates' : 'videos,credits,watch/providers,content_ratings';
     const raw = await tmdb(`/${parsed.type}/${parsed.id}`, { append_to_response: append });
-    const details = fromDetails(raw, parsed.type, reg);
-    db.prepare(
+    const details = toDetails(raw, parsed.type, region);
+    await run(
       `INSERT INTO titles (key, data, details, region, updated_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET data = excluded.data, details = excluded.details, region = excluded.region, updated_at = excluded.updated_at`,
-    ).run(key, JSON.stringify(snapshot(details)), JSON.stringify(details), reg, Date.now());
+      key, JSON.stringify(snapshot(details)), JSON.stringify(details), region, Date.now(),
+    );
     return details;
   } catch (e) {
-    // Serve stale data rather than failing when TMDB hiccups.
     if (row?.details) return JSON.parse(row.details) as TitleDetails;
     throw e;
   }
 }
 
-/** Cheap lookup of stored snapshots; fetches anything missing from TMDB. */
-export async function getTitles(keys: string[]): Promise<Record<string, Title>> {
+/** Stored snapshots for many titles in one query; unknown ones are fetched (capped). */
+export async function getTitles(keys: string[], region: string): Promise<Record<string, Title>> {
   const out: Record<string, Title> = {};
-  if (!keys.length) return out;
   const unique = [...new Set(keys)];
-  const missing: string[] = [];
-  const stmt = db.prepare('SELECT data FROM titles WHERE key = ?');
-  for (const k of unique) {
-    const row = stmt.get(k) as { data: string } | undefined;
-    if (row) out[k] = JSON.parse(row.data);
-    else missing.push(k);
+  if (!unique.length) return out;
+  for (const part of chunk(unique, 80)) {
+    const rows = await all<{ key: string; data: string }>(`SELECT key, data FROM titles WHERE key IN (${placeholders(part.length)})`, ...part);
+    for (const r of rows) out[r.key] = JSON.parse(r.data) as Title;
   }
-  await mapLimit(missing, 6, async (k) => {
-    try {
-      out[k] = snapshot(await getDetails(k));
-    } catch {
-      /* skip titles TMDB can't resolve */
-    }
-  });
+  const missing = unique.filter((k) => !out[k]).slice(0, 24);
+  if (missing.length) {
+    const writes: D1Stmt[] = [];
+    await mapLimit(missing, 6, async (k) => {
+      try {
+        out[k] = await getTitle(k, region, writes);
+      } catch {
+        /* skip titles TMDB can't resolve */
+      }
+    });
+    await batch(writes);
+  }
   return out;
 }
 
 /** Remember list-item data for titles we have not fetched in full yet. */
-export function rememberListItems(items: Title[]) {
-  const stmt = db.prepare('INSERT OR IGNORE INTO titles (key, data, details, region, updated_at) VALUES (?, ?, NULL, NULL, 0)');
-  for (const t of items) stmt.run(t.key, JSON.stringify(t));
+export async function rememberListItems(items: Title[]) {
+  await batch(items.map((t) => stmt('INSERT OR IGNORE INTO titles (key, data, details, region, updated_at) VALUES (?, ?, NULL, NULL, 0)', t.key, JSON.stringify(t))));
 }
 
 export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
@@ -258,9 +289,10 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i:
 
 export async function listProviders(reg: string): Promise<Provider[]> {
   type Raw = { results: { provider_id: number; provider_name: string; logo_path: string; display_priorities?: Record<string, number>; display_priority?: number }[] };
+  const day = 24 * 60 * 60 * 1000;
   const [m, t] = await Promise.all([
-    tmdb<Raw>('/watch/providers/movie', { watch_region: reg }, 24 * LIST_TTL_MS),
-    tmdb<Raw>('/watch/providers/tv', { watch_region: reg }, 24 * LIST_TTL_MS),
+    tmdb<Raw>('/watch/providers/movie', { watch_region: reg }, day),
+    tmdb<Raw>('/watch/providers/tv', { watch_region: reg }, day),
   ]);
   const byId = new Map<number, { p: Provider; priority: number }>();
   for (const r of [...m.results, ...t.results]) {
@@ -270,5 +302,3 @@ export async function listProviders(reg: string): Promise<Provider[]> {
   }
   return [...byId.values()].sort((a, b) => a.priority - b.priority).map((x) => x.p);
 }
-
-export const LIST_TTL = LIST_TTL_MS;
