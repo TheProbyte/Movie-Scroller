@@ -4,15 +4,18 @@
   "version": "1.0.0",
   "description": "A cozy, swipe-to-match movie night app for two.",
   "type": "module",
-  "engines": { "node": ">=22.5" },
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
+    "go": "npm install && npm run build && npm start",
     "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
-    "dev:api": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch server/index.ts",
+    "dev:api": "tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
-    "start": "NODE_ENV=production NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx server/index.ts",
+    "start": "tsx server/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning node --test --import tsx server/*.test.ts"
+    "test": "node --test --import tsx server/logic.test.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.1.0",

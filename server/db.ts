@@ -1,6 +1,11 @@
-import { DatabaseSync } from 'node:sqlite';
+import './quiet.ts';
+import { createRequire } from 'node:module';
+import type { DatabaseSync as DB } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
+
+// Loaded at runtime (not via import) so quiet.ts can filter its experimental warning first.
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: typeof DB };
 
 const dataDir = path.resolve(process.env.DATA_DIR ?? './data');
 fs.mkdirSync(dataDir, { recursive: true });

@@ -11,6 +11,19 @@ A cozy, private, swipe-to-match movie & TV picker for two. Each of you swipes **
 - **Discover** – search plus rails for trending, new releases, popular TV, classics, your services and recommendations based on what you both like. Titles you’ve rejected or watched stay hidden (reset any time in Settings).
 - **Installable PWA** – add it to your home screen; both phones stay in sync live.
 
+## Try it tonight (same home Wi‑Fi)
+
+1. Install **Node.js 22 or newer** from [nodejs.org](https://nodejs.org) on a computer at home.
+2. Download this repo (Code → Download ZIP, or `git clone`), open a terminal in the folder and run:
+   ```bash
+   npm run go
+   ```
+3. The terminal prints something like `On your phones: http://192.168.1.23:8787`. Open that on both phones (same Wi‑Fi). If your computer asks whether to allow incoming connections, say yes.
+4. First phone: follow setup (paste your free [TMDB key](https://www.themoviedb.org/settings/api), names, services). Second phone: just tap “I’m …”.
+5. Optional: Safari → Share → **Add to Home Screen** for a full-screen app icon.
+
+Keep the terminal open while you use it. Next time, just run `npm start`. Your data is saved in the `data` folder.
+
 ## How it works
 
 One small Node server (Express + SQLite) serves the app, keeps your TMDB key private, stores your shared data, and pushes live updates to both phones (server‑sent events). There are no accounts — just two player profiles and an optional household passcode.

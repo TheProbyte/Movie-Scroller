@@ -1,6 +1,8 @@
+import './quiet.ts';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, kvGet, kvSet } from './db.ts';
@@ -442,6 +444,12 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, () => {
-  console.log(`🍿 MovieMatch is running on http://localhost:${port}`);
+  console.log(`\n🍿 MovieMatch is running!\n   On this computer:  http://localhost:${port}`);
+  const lan = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === 'IPv4' && !i.internal)
+    .map((i) => i!.address);
+  for (const ip of lan) console.log(`   On your phones:    http://${ip}:${port}   (same Wi-Fi)`);
+  console.log('');
   if (!tmdbConfigured()) console.log('   TMDB key not set yet — add it in the app or via TMDB_API_KEY.');
 });
