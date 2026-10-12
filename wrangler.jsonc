@@ -1,5 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  // Internal Cloudflare names stay "moviematch" so your live address, database and secrets keep working.
   "name": "moviematch",
   "main": "server/index.ts",
   "compatibility_date": "2025-09-01",

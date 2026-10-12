@@ -45,7 +45,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     headers: { 'content-type': 'application/json', 'x-mm-token': getToken() },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).catch(() => {
-    throw new ApiError(0, 'Can’t reach the MovieMatch server. Check your connection.');
+    throw new ApiError(0, 'Can’t reach the FlickPick server. Check your connection.');
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? `Request failed (${res.status})`);
@@ -65,6 +65,7 @@ export const api = {
     req<unknown>('PUT', '/settings', body),
   providers: (region: string) => req<Provider[]>('GET', `/providers?region=${region}`),
   resetDiscovery: () => req('POST', '/reset-discovery'),
+  resetAll: (scope: 'nights' | 'all') => req('POST', '/reset-all', { confirm: true, scope }),
 
   title: (key: string) => req<TitlePage>('GET', `/titles/${key}`),
   titles: (keys: string[]) => req<Record<string, Title>>('POST', '/titles/batch', { keys }),

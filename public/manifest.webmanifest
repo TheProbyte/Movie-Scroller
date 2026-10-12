@@ -1,6 +1,6 @@
 {
-  "name": "MovieMatch",
-  "short_name": "MovieMatch",
+  "name": "FlickPick",
+  "short_name": "FlickPick",
   "description": "Swipe, match, and pick a movie you'll both love.",
   "start_url": "/",
   "scope": "/",

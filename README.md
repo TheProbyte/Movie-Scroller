@@ -1,4 +1,4 @@
-# 🍿 MovieMatch
+# 💿 FlickPick
 
 A cozy, private, swipe-to-match movie & TV picker for two. Each of you swipes **No / Maybe / Yes** on the same deck of real titles (from TMDB), and MovieMatch reveals what you both want to watch.
 
@@ -14,7 +14,7 @@ A cozy, private, swipe-to-match movie & TV picker for two. Each of you swipes **
 
 ## Put it online for free (Cloudflare)
 
-MovieMatch runs on Cloudflare’s **free plan** — a Worker serves the app and a D1 database stores your watchlist, history and votes. Nothing needs to stay running on your computer, and no credit card is required.
+FlickPick runs on Cloudflare’s **free plan** — a Worker serves the app and a D1 database stores your watchlist, history and votes. Nothing needs to stay running on your computer, and no credit card is required.
 
 You need: a free [Cloudflare account](https://dash.cloudflare.com/sign-up), a free [TMDB API key](https://www.themoviedb.org/settings/api), and [Node.js](https://nodejs.org) (LTS).
 

@@ -56,6 +56,15 @@ body {
 body::before, body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: -2; }
 body::before {
   background:
+    radial-gradient(1000px 560px at 50% -10%, rgba(70, 200, 255, 0.62), transparent 62%),
+    radial-gradient(640px 460px at -8% 105%, rgba(40, 220, 170, 0.28), transparent 62%),
+    radial-gradient(700px 520px at 108% 100%, rgba(170, 60, 190, 0.32), transparent 60%),
+    radial-gradient(500px 360px at 100% 30%, rgba(40, 110, 255, 0.28), transparent 60%),
+    var(--bg);
+}
+body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: -2; }
+body::before {
+  background:
     radial-gradient(900px 520px at 50% -8%, rgba(46, 84, 230, 0.55), transparent 62%),
     radial-gradient(700px 520px at 105% 108%, rgba(160, 40, 170, 0.35), transparent 60%),
     radial-gradient(600px 400px at -10% 70%, rgba(20, 140, 200, 0.22), transparent 60%),
@@ -122,7 +131,8 @@ b, strong { font-weight: 800; }
 
 /* ---------- Panels & windows ---------- */
 .card, .glass {
-  background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
+  /* classic Aero "half gloss": a lighter top half over the panel gradient */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 48%, transparent 49%), linear-gradient(180deg, var(--panel-top), var(--panel-bot));
   border: 1px solid var(--line);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 6px 18px rgba(0, 0, 0, 0.35);
 }
@@ -416,7 +426,7 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .home-tile {
   position: relative; display: flex; flex-direction: column; justify-content: flex-end; min-height: 150px; padding: 12px 14px; border-radius: var(--radius);
   font-weight: 900; font-size: 15px; overflow: hidden;
-  background: linear-gradient(180deg, var(--panel-top), var(--panel-bot)); border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 48%, transparent 49%), linear-gradient(180deg, var(--panel-top), var(--panel-bot)); border: 1px solid var(--line);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 6px 18px rgba(0, 0, 0, 0.35);
   transition: transform 0.15s ease;
 }
@@ -648,3 +658,99 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+
+/* =========================================================================
+   Round 2: Frutiger Aero + Blockbuster, and more bounce
+   ========================================================================= */
+
+/* Floating bubbles */
+.bubbles { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.bubbles span {
+  position: absolute; bottom: -120px; border-radius: 50%; opacity: 0;
+  background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.85) 0 7%, rgba(255, 255, 255, 0.25) 14%, rgba(120, 210, 255, 0.16) 40%, rgba(120, 210, 255, 0.06) 70%, rgba(255, 255, 255, 0.22) 100%);
+  box-shadow: inset 0 -6px 14px rgba(120, 220, 255, 0.25), 0 0 18px rgba(120, 210, 255, 0.18);
+  animation: floatUp linear infinite; will-change: transform, opacity;
+}
+@keyframes floatUp {
+  0% { transform: translate3d(0, 0, 0) scale(0.8); opacity: 0; }
+  10% { opacity: 0.9; }
+  50% { transform: translate3d(22px, -55dvh, 0) scale(1); }
+  90% { opacity: 0.7; }
+  100% { transform: translate3d(-18px, -118dvh, 0) scale(1.1); opacity: 0; }
+}
+body:has(.swipe-screen) .bubbles, body:has(.roulette) .bubbles { display: none; }
+
+/* Blockbuster-style ticket stub */
+.ticket {
+  position: relative; display: block; width: max-content; max-width: 100%; margin: 0 auto 6px; padding: 6px 22px; transform: rotate(-3deg);
+  font-family: var(--display); font-size: 12px; letter-spacing: 0.06em; color: #0a2a9e; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  background: linear-gradient(180deg, #fff27a 0%, #ffd21f 50%, #ffb800 100%);
+  border-top: 2px solid rgba(255, 255, 255, 0.7); border-bottom: 2px solid rgba(0, 0, 0, 0.18);
+  -webkit-mask: radial-gradient(circle 8px at 0 50%, transparent 97%, #000) left / 51% 100% no-repeat, radial-gradient(circle 8px at 100% 50%, transparent 97%, #000) right / 51% 100% no-repeat;
+  mask: radial-gradient(circle 8px at 0 50%, transparent 97%, #000) left / 51% 100% no-repeat, radial-gradient(circle 8px at 100% 50%, transparent 97%, #000) right / 51% 100% no-repeat;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+  animation: ticketWobble 4s ease-in-out infinite;
+}
+@keyframes ticketWobble { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(-1deg) translateY(-2px); } }
+.start-card { text-align: center; }
+.start-card .muted { margin-inline: auto; }
+.start-card-posters { margin-top: 10px; }
+
+/* Blockbuster gold button */
+.btn.gold { background: linear-gradient(180deg, #fff6a3 0%, #ffd21f 50%, #f4a900 51%, #ffc933 100%); border-color: #a46a00; color: #0a2a9e; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 3px 0 rgba(120, 70, 0, 0.55), 0 8px 18px rgba(255, 190, 40, 0.35); }
+.btn.gold::before { background: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.15)); }
+
+/* Jelly presses and wobbly selection */
+.btn:active, .icon-btn:active { transform: scale(0.95, 0.9); }
+.btn, .icon-btn, .orb { transition: transform 0.35s cubic-bezier(0.34, 1.9, 0.5, 1), filter 0.15s ease; }
+.btn:active, .icon-btn:active, .orb:active { transition-duration: 0.08s; }
+.chip.on, .segmented button.on, .mode-card.on { animation: jelly 0.5s ease; }
+@keyframes jelly { 0% { transform: scale(1); } 25% { transform: scale(1.12, 0.88); } 50% { transform: scale(0.92, 1.1); } 75% { transform: scale(1.04, 0.97); } 100% { transform: scale(1); } }
+.tile { transition: transform 0.3s cubic-bezier(0.34, 1.7, 0.5, 1); }
+.tile:active { transform: scale(0.95) rotate(-1.5deg); }
+
+/* Entrances */
+.page { animation: pageIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes pageIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.home-grid > *, .poster-grid > *, .stat-grid > *, .fav-grid > * { animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.home-grid > :nth-child(1), .poster-grid > :nth-child(1), .stat-grid > :nth-child(1) { animation-delay: 0.05s; }
+.home-grid > :nth-child(2), .poster-grid > :nth-child(2), .stat-grid > :nth-child(2) { animation-delay: 0.11s; }
+.home-grid > :nth-child(3), .poster-grid > :nth-child(3), .stat-grid > :nth-child(3) { animation-delay: 0.17s; }
+.home-grid > :nth-child(4), .poster-grid > :nth-child(4), .stat-grid > :nth-child(4) { animation-delay: 0.23s; }
+.poster-grid > :nth-child(5) { animation-delay: 0.29s; } .poster-grid > :nth-child(6) { animation-delay: 0.35s; }
+.poster-grid > :nth-child(7) { animation-delay: 0.41s; } .poster-grid > :nth-child(8) { animation-delay: 0.47s; }
+.poster-grid > :nth-child(n + 9) { animation-delay: 0.5s; }
+@keyframes rise { from { opacity: 0; transform: translateY(22px) scale(0.94); } to { opacity: 1; transform: none; } }
+
+/* Tab bar: icon hops when selected */
+.tabbar a.active svg { animation: hop 0.5s cubic-bezier(0.34, 1.9, 0.5, 1); }
+@keyframes hop { 0% { transform: translateY(0) scale(1); } 40% { transform: translateY(-7px) scale(1.2); } 100% { transform: translateY(0) scale(1); } }
+
+/* Logo: slow spin that speeds up on press, plus a light streak across the wordmark */
+.logo-disc { transition: transform 0.4s; }
+.logo-text { position: relative; overflow: hidden; }
+.logo-text::after {
+  content: ''; position: absolute; top: -10%; bottom: -10%; width: 28%; left: -40%; pointer-events: none;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.85), transparent); mix-blend-mode: overlay; transform: skewX(-18deg);
+  animation: streak 5s ease-in-out infinite;
+}
+@keyframes streak { 0%, 55% { left: -40%; } 85%, 100% { left: 125%; } }
+.detail-burst { animation: wiggle 3.2s ease-in-out infinite; }
+@keyframes wiggle { 0%, 100% { transform: rotate(-6deg) scale(1); } 50% { transform: rotate(8deg) scale(1.08); } }
+.start-card::before { content: ''; position: absolute; inset: 0 0 55% 0; background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)); pointer-events: none; border-radius: inherit; }
+.live-card { animation: rise 0.5s both; }
+.empty .emoji { animation: bob 2.4s ease-in-out infinite; }
+
+/* Details sheet: swipe-to-dismiss and loading placeholders */
+.detail-sheet { overscroll-behavior: contain; will-change: transform; }
+.detail-sheet .win-bar { touch-action: none; cursor: grab; }
+.detail-actions.pending .btn { opacity: 0.55; }
+.sk-lines { display: grid; gap: 10px; }
+.sk-lines span { display: block; height: 18px; border-radius: 8px; }
+.sk-extras { margin-top: 26px; display: grid; gap: 14px; }
+.sk-title { height: 16px; width: 90px; border-radius: 6px; }
+.sk-trailer { aspect-ratio: 16 / 9; border-radius: 12px; }
+.sk-row { display: flex; gap: 10px; }
+.sk-row span { width: 48px; height: 48px; border-radius: 12px; }
+.detail-poster.skeleton { aspect-ratio: 0.71; }

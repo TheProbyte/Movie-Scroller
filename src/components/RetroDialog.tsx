@@ -22,14 +22,14 @@ export function RetroDialog({ opts, onClose }: { opts: DialogOptions; onClose: (
         className="win dialog"
         role="alertdialog"
         aria-modal="true"
-        aria-label={opts.title ?? 'MovieMatch'}
+        aria-label={opts.title ?? 'FlickPick'}
         initial={{ opacity: 0, scale: 0.85, x: '-50%', y: '-46%' }}
         animate={{ opacity: 1, scale: 1, x: '-50%', y: '-50%' }}
         exit={{ opacity: 0, scale: 0.9, x: '-50%', y: '-50%' }}
         transition={{ type: 'spring', stiffness: 500, damping: 30 }}
       >
         <div className="win-bar">
-          <span className="win-title">{opts.title ?? 'MovieMatch'}</span>
+          <span className="win-title">{opts.title ?? 'FlickPick'}</span>
           <button className="win-close" onClick={() => onClose(null)} aria-label="Close">
             <X size={14} strokeWidth={3} />
           </button>

@@ -72,7 +72,7 @@ export function Setup() {
           {step === 'welcome' && (
             <div className="setup-welcome">
               <span className="logo-disc setup-logo" aria-hidden />
-              <h1 className="chrome" style={{ fontSize: 40, lineHeight: 1, textAlign: 'center' }}>MovieMatch</h1>
+              <h1 className="chrome" style={{ fontSize: 40, lineHeight: 1, textAlign: 'center' }}>FlickPick</h1>
               <p className="logo-sub" style={{ textAlign: 'center', fontSize: 16, marginTop: 8 }}>★ Movie night, decided together ★</p>
               <p className="muted" style={{ marginTop: 16, fontSize: 16 }}>
                 Swipe on movies and shows separately, then see what you both want to watch. Let’s set things up — it takes a minute.
@@ -87,7 +87,7 @@ export function Setup() {
             <div>
               <h1 className="page-title">Connect to TMDB</h1>
               <p className="page-sub" style={{ marginBottom: 20 }}>
-                MovieMatch uses The Movie Database for posters, trailers and streaming info. A free API key takes two minutes:
+                FlickPick uses The Movie Database for posters, trailers and streaming info. A free API key takes two minutes:
               </p>
               <ol className="muted setup-steps">
                 <li>
@@ -154,7 +154,7 @@ export function Setup() {
             <div style={{ textAlign: 'center', paddingTop: 30 }}>
               <div style={{ fontSize: 48 }}>📱</div>
               <h1 className="page-title" style={{ marginTop: 10 }}>Whose phone is this?</h1>
-              <p className="page-sub" style={{ marginBottom: 26 }}>Open MovieMatch on the other phone too — it’ll sync automatically.</p>
+              <p className="page-sub" style={{ marginBottom: 26 }}>Open FlickPick on the other phone too — it’ll sync automatically.</p>
               <div className="stack">
                 {[0, 1].map((i) => (
                   <button key={i} className="btn lg block" disabled={busy} onClick={() => finish((i + 1) as PlayerId)}>

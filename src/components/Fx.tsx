@@ -6,15 +6,27 @@ const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').ma
 /** Tap anywhere for a little burst of sparkles (skipped while swiping so cards stay smooth). */
 export function TapSparkles() {
   useEffect(() => {
+    // A "tap" is a quick press that barely moves. Scrolling or dragging fires pointercancel / big
+    // movement, so it never sparkles.
+    let start: { x: number; y: number; t: number; target: HTMLElement | null } | null = null;
     const onDown = (e: PointerEvent) => {
       unlockAudio();
-      const target = e.target as HTMLElement | null;
+      start = { x: e.clientX, y: e.clientY, t: performance.now(), target: e.target as HTMLElement | null };
+    };
+    const onCancel = () => {
+      start = null;
+    };
+    const onUp = (e: PointerEvent) => {
+      const s = start;
+      start = null;
+      if (!s || performance.now() - s.t > 450 || Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) return;
+      const target = s.target;
       if (target?.closest('.btn, .chip, .segmented button, .tabbar a, .mode-card, .switch-row')) sfx.click();
       if (reduced() || target?.closest('.swipe-screen, input, textarea, select')) return;
       const layer = document.createElement('div');
       layer.className = 'sparkle-layer';
-      layer.style.left = `${e.clientX}px`;
-      layer.style.top = `${e.clientY}px`;
+      layer.style.left = `${s.x}px`;
+      layer.style.top = `${s.y}px`;
       const glyphs = ['✦', '★', '✧', '♥', '✦', '★'];
       glyphs.forEach((g, i) => {
         const s = document.createElement('span');
@@ -30,7 +42,13 @@ export function TapSparkles() {
       window.setTimeout(() => layer.remove(), 650);
     };
     window.addEventListener('pointerdown', onDown, { passive: true });
-    return () => window.removeEventListener('pointerdown', onDown);
+    window.addEventListener('pointerup', onUp, { passive: true });
+    window.addEventListener('pointercancel', onCancel, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
   }, []);
   return null;
 }
@@ -125,6 +143,30 @@ export function BouncingDisc() {
         <span>MOVIE</span>
         <span>MATCH</span>
       </div>
+    </div>
+  );
+}
+
+/** Slow-floating glossy bubbles behind everything (Frutiger Aero). Transform/opacity only, so it stays cheap. */
+export function Bubbles() {
+  const bubbles = useMemo(
+    () =>
+      [
+        { l: 6, s: 70, d: 26, dl: 0 },
+        { l: 22, s: 34, d: 19, dl: 6 },
+        { l: 41, s: 96, d: 34, dl: 12 },
+        { l: 58, s: 26, d: 17, dl: 3 },
+        { l: 72, s: 58, d: 28, dl: 9 },
+        { l: 88, s: 40, d: 22, dl: 15 },
+        { l: 33, s: 22, d: 15, dl: 20 },
+      ].map((b, i) => ({ ...b, i })),
+    [],
+  );
+  return (
+    <div className="bubbles" aria-hidden>
+      {bubbles.map((b) => (
+        <span key={b.i} style={{ left: `${b.l}%`, width: b.s, height: b.s, animationDuration: `${b.d}s`, animationDelay: `-${b.dl}s` }} />
+      ))}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { AppProvider, useApp, useBoot } from './context';
 import { TabBar } from './components/TabBar';
 import { TitleSheet } from './components/TitleSheet';
 import { WhoAmI } from './components/WhoAmI';
-import { TapSparkles } from './components/Fx';
+import { Bubbles, TapSparkles } from './components/Fx';
 import { Home } from './pages/Home';
 import { Discover } from './pages/Discover';
 import { Watchlist } from './pages/Watchlist';
@@ -30,6 +30,7 @@ function Shell() {
   return (
     <div className="app">
       <TapSparkles />
+      <Bubbles />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/discover" element={<Discover />} />
@@ -64,7 +65,7 @@ export function App() {
     return (
       <div className="center" style={{ minHeight: '100dvh', padding: 24 }}>
         <div style={{ fontSize: 44 }}>📡</div>
-        <h2 className="page-title">Can’t reach MovieMatch</h2>
+        <h2 className="page-title">Can’t reach FlickPick</h2>
         <p className="muted">Make sure the server is running and you’re on the right address.</p>
         <button className="btn primary" onClick={() => boot.refetch()}>
           Try again

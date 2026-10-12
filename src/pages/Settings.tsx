@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { useApp } from '../context';
@@ -12,6 +13,7 @@ export function Settings() {
   const { boot, me, setMe, toast, ask } = useApp();
   const [muted, setMuted] = useMuted();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [names, setNames] = useState(boot.players.map((p) => p.name));
   const [region, setRegion] = useState(boot.settings.region);
   const [services, setServices] = useState<number[]>(boot.settings.services);
@@ -29,6 +31,37 @@ export function Settings() {
       toast((e as Error).message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const resetData = async (scope: 'nights' | 'all') => {
+    const v = await ask({
+      title: scope === 'all' ? 'Reset everything' : 'Reset nights & taste',
+      icon: '🧹',
+      message:
+        scope === 'all'
+          ? 'This permanently deletes all movie nights, swipes, stats, your watchlist, watched list and ratings. This can’t be undone.'
+          : 'This permanently deletes all movie nights, swipes and taste stats. Your watchlist and watched list stay.',
+      buttons: [
+        { label: 'Yes, wipe it', value: 'yes', variant: 'danger' },
+        { label: 'Cancel', value: 'no' },
+      ],
+    });
+    if (v !== 'yes') return;
+    try {
+      await api.resetAll(scope);
+      // Forget this phone's "already shown" markers for old nights.
+      try {
+        for (const k of Object.keys(localStorage)) if (k.startsWith('mm.revealed.') || k.startsWith('mm.ack.')) localStorage.removeItem(k);
+      } catch {
+        /* ignore */
+      }
+      qc.clear();
+      sfx.cancel();
+      toast('All clean — fresh start ✨');
+      navigate('/', { replace: true });
+    } catch (e) {
+      toast((e as Error).message);
     }
   };
 
@@ -103,7 +136,7 @@ export function Settings() {
       <div className="card">
         <strong>Reset discovery memory</strong>
         <p className="muted" style={{ fontSize: 13, margin: '4px 0 12px' }}>
-          MovieMatch hides titles either of you said no to, and ones you’ve both already voted on. Reset to see them again (your history stays).
+          FlickPick hides titles either of you said no to, and ones you’ve both already voted on. Reset to see them again (your history stays).
         </p>
         <button
           className="btn sm"
@@ -127,6 +160,24 @@ export function Settings() {
         </button>
       </div>
 
+      <div className="section-title">Start fresh</div>
+      <div className="card stack" style={{ gap: 14 }}>
+        <div>
+          <strong>Reset movie nights &amp; taste</strong>
+          <p className="muted" style={{ fontSize: 13, margin: '4px 0 10px' }}>
+            Clears every movie night, all swipes, and the Our Taste stats. Your watchlist and watched list stay.
+          </p>
+          <button className="btn sm danger" onClick={() => resetData('nights')}>Reset nights &amp; taste</button>
+        </div>
+        <div style={{ borderTop: '1px solid var(--line-soft)', paddingTop: 14 }}>
+          <strong>Reset everything</strong>
+          <p className="muted" style={{ fontSize: 13, margin: '4px 0 10px' }}>
+            Also clears the watchlist, watched list and ratings — a totally clean slate. Names, services and your TMDB key are kept.
+          </p>
+          <button className="btn sm danger" onClick={() => resetData('all')}>Reset everything</button>
+        </div>
+      </div>
+
       <div className="section-title">TMDB</div>
       <div className="card">
         <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
@@ -141,7 +192,7 @@ export function Settings() {
       </div>
 
       <p className="faint" style={{ fontSize: 12, textAlign: 'center', marginTop: 28 }}>
-        MovieMatch · This product uses the TMDB API but is not endorsed or certified by TMDB.
+        FlickPick · This product uses the TMDB API but is not endorsed or certified by TMDB.
       </p>
     </div>
   );

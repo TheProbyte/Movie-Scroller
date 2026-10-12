@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { CheckCircle2, KeyRound, Search, Settings as Gear, X } from 'lucide-react';
+import { CheckCircle2, Search, Settings as Gear, X } from 'lucide-react';
 import { api } from '../api';
 import { useApp } from '../context';
 import { Poster } from '../components/Poster';
@@ -40,6 +40,7 @@ export function Home() {
     staleTime: Infinity,
   });
   const pickTitle = pendingPick ? pickQ.data?.[pendingPick.chosenKey!] : undefined;
+  const invited = Boolean(live && live.mode === 'duo' && me && live.progress[me].done === 0 && live.createdBy === otherPlayer(me));
   const nights = sessions.data?.filter((s) => s.status === 'complete').length ?? 0;
   const marquee = (rails.data?.trending ?? []).slice(0, 10).map((t) => t.title);
 
@@ -68,10 +69,7 @@ export function Home() {
         <div className="logo">
           <span className="logo-disc" aria-hidden />
           <div>
-            <div className="logo-text chrome">MovieMatch</div>
-            <div className="logo-sub">
-              ★ {name(1)} &amp; {name(2)}’s video club ★
-            </div>
+            <div className="logo-text chrome">FlickPick</div>
           </div>
         </div>
         <div className="row" style={{ gap: 8 }}>
@@ -99,14 +97,14 @@ export function Home() {
           <span className="live-dot" />
           <button className="grow" style={{ textAlign: 'left' }} onClick={() => navigate(`/night/${live.id}`)}>
             <div style={{ fontWeight: 900 }}>
-              Movie night in progress {live.mode === 'duo' && <span className="led">{live.code}</span>}
+              {invited ? `${name(live.createdBy)} started a movie night!` : 'Movie night in progress'}
             </div>
             <div className="faint" style={{ fontSize: 13 }}>
               {name(1)} {live.progress[1].done}/{live.progress[1].total} · {name(2)} {live.progress[2].done}/{live.progress[2].total}
             </div>
           </button>
           <button className="btn sm primary" onClick={() => navigate(`/night/${live.id}`)}>
-            {live.mode === 'duo' && me && live.progress[me].done === 0 && live.createdBy === otherPlayer(me) ? 'Join' : 'Continue'}
+            {invited ? 'Join' : 'Continue'}
           </button>
           <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={cancelLive} aria-label="Cancel movie night">
             <X size={16} strokeWidth={3} />
@@ -125,6 +123,7 @@ export function Home() {
         transition={{ duration: 0.45 }}
         whileTap={{ scale: 0.98 }}
       >
+        <span className="ticket" aria-hidden>★ ADMIT TWO ★ NOW SHOWING</span>
         <div className="start-card-posters" aria-hidden>
           {(rails.data?.trending ?? []).slice(1, 4).map((t, i) => (
             <motion.div
@@ -141,12 +140,8 @@ export function Home() {
         </div>
         <div className="start-card-title chrome">Start Movie Night</div>
         <p className="muted" style={{ marginTop: 6 }}>Swipe, match, and find something you’ll both love.</p>
-        <span className="btn primary lg start-card-cta">▶ PLAY</span>
+        <span className="btn gold lg start-card-cta">▶ PLAY</span>
       </motion.button>
-
-      <Link to="/night/join" className="join-link">
-        <KeyRound size={16} /> Got a code? Join a movie night
-      </Link>
 
       {pendingPick && pickTitle && (
         <button className="card row" style={{ marginTop: 18, width: '100%', textAlign: 'left' }} onClick={() => openTitle(pickTitle.key)}>

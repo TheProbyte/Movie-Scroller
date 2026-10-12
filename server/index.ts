@@ -153,6 +153,17 @@ app.post('/api/reset-discovery', async (c) => {
   return c.json({ ok: true });
 });
 
+/** Wipe test data. "nights" clears movie nights, votes and taste; "all" also clears watchlist and watched. */
+app.post('/api/reset-all', async (c) => {
+  const b = await body(c);
+  if (b.confirm !== true) throw new HttpError(400, 'Confirmation required');
+  const stmts = [stmt('DELETE FROM votes'), stmt('DELETE FROM session_titles'), stmt('DELETE FROM sessions')];
+  if (b.scope === 'all') stmts.push(stmt('DELETE FROM watchlist'), stmt('DELETE FROM watched'));
+  stmts.push(stmt('DELETE FROM kv WHERE key = ?', 'discoveryResetAt'));
+  await batch(stmts);
+  return c.json({ ok: true });
+});
+
 // ---------------------------------------------------------------------------
 // Watchlist & watched rows
 

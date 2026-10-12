@@ -19,7 +19,7 @@ export function Passcode() {
   return (
     <form className="page no-tabs center" style={{ minHeight: '100dvh' }} onSubmit={submit}>
       <div style={{ fontSize: 48 }}>🍿</div>
-      <h1 className="display" style={{ fontSize: 40 }}>MovieMatch</h1>
+      <h1 className="chrome" style={{ fontSize: 38 }}>FlickPick</h1>
       <p className="muted">Enter your household passcode</p>
       <input className="input" type="password" value={code} onChange={(e) => setCode(e.target.value)} autoFocus style={{ maxWidth: 300, textAlign: 'center' }} aria-label="Passcode" />
       {error && <p style={{ color: 'var(--no)' }}>{error}</p>}

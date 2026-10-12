@@ -357,7 +357,7 @@ function Handoff({ session, player, onGo }: { session: SessionDetail; player: Pl
           </>
         )}
       </motion.div>
-      <motion.button className="btn primary lg block" style={{ marginTop: 32, maxWidth: 360 }} onClick={onGo} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
+      <motion.button className="btn gold lg block" style={{ marginTop: 32, maxWidth: 360 }} onClick={onGo} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
         ▶ I’m {name(player)} — let’s go
       </motion.button>
     </div>
@@ -401,7 +401,7 @@ function Lobby({ session, me, onGo }: { session: SessionDetail; me: PlayerId; on
         ))}
       </div>
       <p className="muted" style={{ textAlign: 'center', maxWidth: 320 }}>
-        {name(partner)} can open MovieMatch and tap <strong>Join with code</strong>, or use your link.
+        {name(partner)} will see this movie night pop up on their home screen — just tap <strong>Join</strong>.
       </p>
       <div className="row" style={{ marginTop: 18 }}>
         <button className="btn" onClick={share}>
@@ -413,7 +413,7 @@ function Lobby({ session, me, onGo }: { session: SessionDetail; me: PlayerId; on
         <span className="grow">{name(partner)}</span>
         <span className="faint">{p.done > 0 ? <span className="led">{p.done}/{p.total}</span> : 'Not started yet'}</span>
       </div>
-      <button className="btn primary lg block" style={{ marginTop: 22, maxWidth: 360 }} onClick={onGo}>
+      <button className="btn gold lg block" style={{ marginTop: 22, maxWidth: 360 }} onClick={onGo}>
         ▶ Start swiping ({session.deck.length})
       </button>
     </div>

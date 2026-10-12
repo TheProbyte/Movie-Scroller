@@ -1,4 +1,4 @@
-// MovieMatch service worker: app shell offline, posters cached, API always live.
+// FlickPick service worker: app shell offline, posters cached, API always live.
 const SHELL = 'mm-shell-v1';
 const IMAGES = 'mm-images-v1';
 const MAX_IMAGES = 400;

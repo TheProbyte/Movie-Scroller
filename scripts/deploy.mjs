@@ -35,7 +35,7 @@ function parseJson(text, open, close) {
   }
 }
 
-say('\n🍿 MovieMatch → Cloudflare (free plan)\n');
+say('\n🍿 FlickPick → Cloudflare (free plan)\n');
 
 // 1. Cloudflare login ---------------------------------------------------------
 const loggedIn = () => {
