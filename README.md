@@ -36,7 +36,7 @@ Let Cloudflare redeploy by itself whenever new code lands on GitHub — no PC ne
 1. In the [Cloudflare dashboard](https://dash.cloudflare.com) open **Workers & Pages → moviematch → Settings → Build**.
 2. Under **Git repository**, click **Connect** and pick your GitHub repo (authorize Cloudflare’s GitHub app if asked).
 3. Set the **production branch** to the branch you deploy from, **build command** to `npm run build`, and leave the **deploy command** as `npx wrangler deploy`.
-4. Save. Cloudflare builds and deploys right away, then again on every push. Your database, passcode and TMDB key carry over automatically.
+4. Save. Cloudflare doesn't build at connection time — it builds on the **next push** to that branch, then on every push after. (To trigger a build without changing code, open **Deployments → Retry build**, or push any commit.) Your database, passcode and TMDB key carry over automatically.
 
 > **Windows tip:** if PowerShell says “running scripts is disabled”, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd run deploy`.
 
