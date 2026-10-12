@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './api';
+import { sfx } from './sound';
+import { RetroDialog, type DialogOptions } from './components/RetroDialog';
 import type { Bootstrap, PlayerId } from '../shared/types';
 
 type ImgSize = 'w92' | 'w185' | 'w342' | 'w500' | 'w780' | 'w1280' | 'original' | 'h632';
@@ -15,6 +17,8 @@ interface Ctx {
   img: (path: string | null | undefined, size?: ImgSize) => string | null;
   toast: (msg: string) => void;
   openTitle: (key: string, opts?: { sessionId?: string }) => void;
+  /** Retro dialog box; resolves with the chosen button's value, or null if dismissed. */
+  ask: (opts: DialogOptions) => Promise<string | null>;
 }
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -67,6 +71,7 @@ export function AppProvider({ boot, children }: { boot: Bootstrap; children: Rea
   const [me, setMeState] = useState<PlayerId | null>(readMe);
   const [toastMsg, setToastMsg] = useState<{ id: number; msg: string } | null>(null);
   const timer = useRef<number>();
+  const [dialog, setDialog] = useState<{ opts: DialogOptions; resolve: (v: string | null) => void } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -84,8 +89,11 @@ export function AppProvider({ boot, children }: { boot: Bootstrap; children: Rea
   const toast = useCallback((msg: string) => {
     window.clearTimeout(timer.current);
     setToastMsg({ id: Date.now(), msg });
+    sfx.pop();
     timer.current = window.setTimeout(() => setToastMsg(null), 2600);
   }, []);
+
+  const ask = useCallback((opts: DialogOptions) => new Promise<string | null>((resolve) => setDialog({ opts, resolve })), []);
 
   const openTitle = useCallback(
     (key: string, opts: { sessionId?: string } = {}) => {
@@ -107,8 +115,9 @@ export function AppProvider({ boot, children }: { boot: Bootstrap; children: Rea
       img: (path, size = 'w500') => (path ? `${boot.imageBase}/${size}${path}` : null),
       toast,
       openTitle,
+      ask,
     }),
-    [boot, me, setMe, toast, openTitle],
+    [boot, me, setMe, toast, openTitle, ask],
   );
 
   return (
@@ -126,6 +135,18 @@ export function AppProvider({ boot, children }: { boot: Bootstrap; children: Rea
           >
             {toastMsg.msg}
           </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {dialog && (
+          <RetroDialog
+            key="dialog"
+            opts={dialog.opts}
+            onClose={(v) => {
+              dialog.resolve(v);
+              setDialog(null);
+            }}
+          />
         )}
       </AnimatePresence>
     </AppCtx.Provider>

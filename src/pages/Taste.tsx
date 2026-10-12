@@ -185,13 +185,13 @@ function Ring({ value }: { value: number }) {
   const c = 2 * Math.PI * r;
   return (
     <svg width="104" height="104" viewBox="0 0 104 104" role="img" aria-label={`Agreement ${pct(value)}`}>
-      <circle cx="52" cy="52" r={r} fill="none" stroke="var(--surface-2)" strokeWidth="9" />
+      <circle cx="52" cy="52" r={r} fill="none" stroke="#0a1040" strokeWidth="9" />
       <motion.circle
         cx="52"
         cy="52"
         r={r}
         fill="none"
-        stroke="var(--accent)"
+        stroke="var(--gold)"
         strokeWidth="9"
         strokeLinecap="round"
         strokeDasharray={c}

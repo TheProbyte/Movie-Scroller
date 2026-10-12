@@ -5,7 +5,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Bookmark, BookmarkCheck, Check, CheckCircle2, ExternalLink, Play, Popcorn, Star, X } from 'lucide-react';
 import { api } from '../api';
 import { useApp } from '../context';
-import { Poster, formatRuntime } from './Poster';
+import { Poster, Starburst, formatRuntime } from './Poster';
+import { sfx } from '../sound';
 import { StarRating } from './StarRating';
 import type { PlayerId, Provider, Vote, WatchlistSection } from '../../shared/types';
 
@@ -62,9 +63,13 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
         exit={{ y: '100%', x: '-50%' }}
         transition={{ type: 'spring', stiffness: 360, damping: 38 }}
       >
-        <button className="icon-btn detail-close glass" onClick={close} aria-label="Close">
-          <X size={20} />
-        </button>
+        <div className="win-bar">
+          <span aria-hidden>📀</span>
+          <span className="win-title">{d ? `${d.title} — Info` : 'Loading…'}</span>
+          <button className="win-close" onClick={close} aria-label="Close">
+            <X size={14} strokeWidth={3} />
+          </button>
+        </div>
 
         {!d ? (
           <div className="center" style={{ minHeight: '60dvh' }}>
@@ -79,10 +84,17 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
 
             <div className="detail-body">
               <div className="row" style={{ alignItems: 'flex-end', gap: 16, marginTop: -110 }}>
-                <Poster title={d} size="w342" className="detail-poster" eager />
+                <Poster title={d} size="w342" className="detail-poster" eager band />
                 <div className="grow" style={{ paddingBottom: 4 }}>
-                  <div className="tag" style={{ marginBottom: 8 }}>{d.type === 'tv' ? 'Series' : 'Movie'}</div>
-                  <h2 className="display" style={{ fontSize: 34, lineHeight: 1.02 }}>{d.title}</h2>
+                  <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+                    <span className={`type-pill ${d.type}`}>{d.type === 'tv' ? 'TV SERIES' : 'MOVIE'}</span>
+                    {d.rating > 0 && (
+                      <Starburst className="detail-burst">
+                        ★<b>{d.rating.toFixed(1)}</b>
+                      </Starburst>
+                    )}
+                  </div>
+                  <h2 className="detail-title">{d.title}</h2>
                 </div>
               </div>
 
@@ -92,8 +104,8 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
                 ))}
                 {d.rating > 0 && (
                   <span className="row" style={{ gap: 4 }}>
-                    <Star size={14} fill="var(--accent)" color="var(--accent)" /> {d.rating.toFixed(1)}
-                    <span className="faint">({d.voteCount.toLocaleString()})</span>
+                    <Star size={14} fill="var(--gold)" color="var(--gold)" /> {d.rating.toFixed(1)}
+                    <span className="faint">({d.voteCount.toLocaleString()} votes)</span>
                   </span>
                 )}
               </div>
@@ -111,6 +123,7 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
                   style={{ marginTop: 20 }}
                   onClick={async () => {
                     await api.choose(sessionId, d.key);
+                    sfx.land();
                     qc.invalidateQueries({ queryKey: ['session', sessionId] });
                     toast(`🍿 Tonight: ${d.title}`);
                     close();
@@ -131,7 +144,8 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
                     onClick={() =>
                       mutate.mutate(async () => {
                         await api.addToWatchlist([{ key: d.key, section: 'saved' }], { addedBy: me ?? undefined });
-                        toast('Saved to your watchlist');
+                        sfx.bling();
+                        toast('Saved to your watchlist ★');
                       })
                     }
                   >
@@ -148,6 +162,7 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
                     onClick={() =>
                       mutate.mutate(async () => {
                         await api.markWatched(d.key, sessionId ?? undefined);
+                        sfx.bling();
                         toast('Marked as watched — rate it below');
                       })
                     }
@@ -171,7 +186,10 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
                       <StarRating
                         value={state.watched!.ratings[p]}
                         color={p === 1 ? 'var(--p1)' : 'var(--p2)'}
-                        onChange={(v) => mutate.mutate(() => api.rate(d.key, p, v))}
+                        onChange={(v) => {
+                          sfx.tick();
+                          mutate.mutate(() => api.rate(d.key, p, v));
+                        }}
                       />
                     </div>
                   ))}
@@ -195,7 +213,7 @@ export function TitleSheet({ titleKey, sessionId }: { titleKey: string; sessionI
                     ) : (
                       <button onClick={() => setPlaying(true)} aria-label="Play trailer">
                         <img src={`https://i.ytimg.com/vi/${d.trailer.key}/hqdefault.jpg`} alt="" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />
-                        <span className="trailer-play glass">
+                        <span className="trailer-play">
                           <Play size={26} fill="currentColor" />
                         </span>
                       </button>

@@ -2,9 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import '@fontsource-variable/inter';
-import '@fontsource/instrument-serif/400.css';
-import '@fontsource/instrument-serif/400-italic.css';
+import '@fontsource-variable/nunito';
+import '@fontsource-variable/nunito/wght-italic.css';
+import '@fontsource/bungee/400.css';
+import '@fontsource/vt323/400.css';
 import './styles.css';
 import { App } from './App';
 

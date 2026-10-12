@@ -1,7 +1,7 @@
 import { Star } from 'lucide-react';
 
 /** 0.5–5 stars. Tap the left half of a star for a half rating; tap the current value to clear. */
-export function StarRating({ value, onChange, size = 26, color = 'var(--accent)' }: { value: number | null | undefined; onChange?: (v: number | null) => void; size?: number; color?: string }) {
+export function StarRating({ value, onChange, size = 26, color = 'var(--gold)' }: { value: number | null | undefined; onChange?: (v: number | null) => void; size?: number; color?: string }) {
   const v = value ?? 0;
   return (
     <div className="row" style={{ gap: 2 }} role={onChange ? 'slider' : 'img'} aria-label={`${v} out of 5 stars`} aria-valuenow={v} aria-valuemin={0} aria-valuemax={5}>

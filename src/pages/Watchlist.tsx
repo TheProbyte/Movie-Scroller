@@ -43,7 +43,7 @@ export function Watchlist() {
     <div className="page">
       <div className="page-header" style={{ marginBottom: 6 }}>
         <h1 className="page-title">Our Watchlist</h1>
-        <Link to="/discover?focus=1" className="icon-btn glass" aria-label="Add a title">
+        <Link to="/discover?focus=1" className="icon-btn" aria-label="Add a title">
           <Plus size={20} />
         </Link>
       </div>

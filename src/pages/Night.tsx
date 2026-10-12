@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Copy, Share2, X } from 'lucide-react';
-import { api } from '../api';
+import { Check, Copy, Share2, Volume2, VolumeX, X } from 'lucide-react';
+import { ApiError, api } from '../api';
 import { useApp } from '../context';
 import { SwipeDeck } from '../components/SwipeDeck';
 import { Results } from '../components/Results';
 import { Poster } from '../components/Poster';
+import { BouncingDisc, Confetti } from '../components/Fx';
+import { sfx, useMuted } from '../sound';
 import type { PlayerId, SessionDetail, Title, Vote } from '../../shared/types';
 import { otherPlayer } from '../../shared/types';
 
@@ -47,6 +49,48 @@ const store = {
   },
 };
 
+/** "Leave" asks whether to pause (swipes are saved) or cancel the whole night. */
+function useLeaveNight(id: string) {
+  const { ask, toast } = useApp();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  return async () => {
+    const choice = await ask({
+      title: 'Leave movie night?',
+      icon: '📼',
+      message: 'Your swipes are saved — you can pick up where you left off from the home screen.',
+      buttons: [
+        { label: 'Keep swiping', value: 'stay', variant: 'primary' },
+        { label: 'Pause & go home', value: 'leave' },
+        { label: 'Cancel movie night', value: 'cancel', variant: 'danger' },
+      ],
+    });
+    if (choice === 'leave') navigate('/');
+    if (choice !== 'cancel') return;
+    const sure = await ask({
+      title: 'Cancel movie night',
+      icon: '⚠️',
+      message: 'This removes tonight’s titles and everyone’s swipes. It can’t be undone.',
+      buttons: [
+        { label: 'Yes, cancel it', value: 'yes', variant: 'danger' },
+        { label: 'Never mind', value: 'no' },
+      ],
+    });
+    if (sure !== 'yes') return;
+    try {
+      await api.deleteSession(id);
+      sfx.cancel();
+      qc.removeQueries({ queryKey: ['session', id] });
+      qc.invalidateQueries({ queryKey: ['active'] });
+      qc.invalidateQueries({ queryKey: ['sessions'] });
+      toast('Movie night cancelled');
+      navigate('/', { replace: true });
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
+}
+
 export function Night() {
   const { id = '' } = useParams();
   const { me, toast } = useApp();
@@ -79,33 +123,42 @@ export function Night() {
     }
   }
 
+  // Depends on the deck only (not progress), so partner updates don't reshuffle anything.
+  const deck = s?.deck;
   const deckOrder = useMemo(() => {
-    if (!s || !swiper) return [] as Title[];
-    const byKey = new Map(s.deck.map((t) => [t.key, t]));
+    if (!deck || !swiper) return [] as Title[];
+    const byKey = new Map(deck.map((t) => [t.key, t]));
     return seededOrder(
-      s.deck.map((t) => t.key),
-      `${s.id}:${swiper}`,
+      deck.map((t) => t.key),
+      `${id}:${swiper}`,
     ).map((k) => byKey.get(k)!);
-  }, [s, swiper]);
+  }, [deck, id, swiper]);
 
   const done = swiper ? votedBy(swiper) : new Set<string>();
   const remaining = deckOrder.filter((t) => !done.has(t.key));
 
   const voteM = useMutation({
-    mutationFn: ({ player, key, vote }: { player: PlayerId; key: string; vote: Vote }) => api.vote(id, player, key, vote),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['session', id] }),
+    mutationFn: ({ player, key, vote }: { player: PlayerId; key: string; vote: Vote; last: boolean }) => api.vote(id, player, key, vote),
+    // Refetching after every swipe caused jank mid-animation; polling covers progress,
+    // so only refresh right away once this player's deck is finished.
+    onSuccess: (_d, v) => {
+      if (v.last) qc.invalidateQueries({ queryKey: ['session', id] });
+    },
     onError: (e: Error, v) => {
       toast(e.message);
       setLocal((l) => ({ ...l, [v.player]: { ...l[v.player], [v.key]: null } }));
+      qc.invalidateQueries({ queryKey: ['session', id] });
     },
   });
 
   if (q.isError) {
+    const gone = q.error instanceof ApiError && q.error.status === 404;
     return (
       <div className="page no-tabs center">
-        <div style={{ fontSize: 44 }}>🎞️</div>
-        <p>{(q.error as Error).message}</p>
-        <a className="btn" href="/">Go home</a>
+        <div style={{ fontSize: 52 }}>{gone ? '📼' : '🎞️'}</div>
+        <h1 className="page-title chrome" style={{ fontSize: 28 }}>{gone ? 'Night cancelled' : 'Hmm…'}</h1>
+        <p className="muted">{gone ? 'This movie night was cancelled. Start a fresh one any time!' : (q.error as Error).message}</p>
+        <a className="btn primary" href="/">Back home</a>
       </div>
     );
   }
@@ -174,7 +227,7 @@ export function Night() {
         const player = swiper!;
         setLocal((l) => ({ ...l, [player]: { ...l[player], [t.key]: v } }));
         setUndoStack((u) => [...u, { player, key: t.key }]);
-        voteM.mutate({ player, key: t.key, vote: v });
+        voteM.mutate({ player, key: t.key, vote: v, last: remaining.length === 1 });
       }}
       onUndo={() => {
         const last = undoStack[undoStack.length - 1];
@@ -212,17 +265,16 @@ function SwipeScreen({
   canUndo: boolean;
 }) {
   const { name } = useApp();
-  const navigate = useNavigate();
+  const leave = useLeaveNight(session.id);
+  const [muted, setMuted] = useMuted();
   const partner = otherPlayer(swiper);
   const partnerProgress = session.progress[partner];
-  const top = cards[0];
 
   return (
     <div className="swipe-screen">
-      <AmbientPoster title={top} />
       <header className="swipe-header">
-        <button className="icon-btn glass" onClick={() => navigate('/')} aria-label="Leave for now">
-          <X size={20} />
+        <button className="icon-btn" onClick={leave} aria-label="Leave or cancel movie night">
+          <X size={20} strokeWidth={2.6} />
         </button>
         <div className="grow" style={{ textAlign: 'center' }}>
           <div className="swipe-who">
@@ -236,14 +288,15 @@ function SwipeScreen({
             <motion.div className="progress-fill" animate={{ width: `${(done / total) * 100}%` }} />
           </div>
         </div>
-        {session.mode === 'duo' ? (
-          <div className="partner-pill glass" title={`${name(partner)}'s progress`}>
+        {session.mode === 'duo' && (
+          <div className="partner-pill" title={`${name(partner)}'s progress`}>
             <span className="dot" style={{ background: partner === 1 ? 'var(--p1)' : 'var(--p2)' }} />
-            {partnerProgress.done}/{partnerProgress.total}
+            <span className="led">{partnerProgress.done}/{partnerProgress.total}</span>
           </div>
-        ) : (
-          <span style={{ width: 42 }} />
         )}
+        <button className="icon-btn" onClick={() => setMuted(!muted)} aria-label={muted ? 'Turn sounds on' : 'Mute sounds'}>
+          {muted ? <VolumeX size={19} /> : <Volume2 size={19} />}
+        </button>
       </header>
 
       <SwipeDeck cards={cards} onVote={onVote} onUndo={onUndo} canUndo={canUndo} />
@@ -252,30 +305,21 @@ function SwipeScreen({
   );
 }
 
-function AmbientPoster({ title }: { title: Title | undefined }) {
-  const { img } = useApp();
-  return (
-    <div className="ambient" aria-hidden>
-      <AnimatePresence initial={false}>
-        {title?.poster && (
-          <motion.img key={title.key} src={img(title.poster, 'w185')!} alt="" initial={{ opacity: 0 }} animate={{ opacity: 0.38 }} exit={{ opacity: 0 }} transition={{ duration: 0.6 }} />
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 function Handoff({ session, player, onGo }: { session: SessionDetail; player: PlayerId; onGo: () => void }) {
   const { name } = useApp();
-  const navigate = useNavigate();
+  const leave = useLeaveNight(session.id);
   const isFirst = player === session.firstPlayer && session.votedKeys[player].length === 0;
+  useEffect(() => {
+    const t = window.setTimeout(() => sfx.turn(), 350);
+    return () => window.clearTimeout(t);
+  }, []);
   const color = player === 1 ? 'var(--p1)' : 'var(--p2)';
   const posters = session.deck.slice(0, 5);
 
   return (
     <div className="page no-tabs handoff">
-      <button className="icon-btn glass" style={{ position: 'absolute', top: 'calc(var(--safe-top) + 16px)', left: 18 }} onClick={() => navigate('/')} aria-label="Leave">
-        <X size={20} />
+      <button className="icon-btn corner-btn" onClick={leave} aria-label="Leave or cancel movie night">
+        <X size={20} strokeWidth={2.6} />
       </button>
       <div className="fan">
         {posters.map((t, i) => (
@@ -294,8 +338,8 @@ function Handoff({ session, player, onGo }: { session: SessionDetail; player: Pl
         {isFirst ? (
           <>
             <p className="eyebrow">Pass & Play · {session.deck.length} titles</p>
-            <h1 className="display handoff-title">
-              <span style={{ color }}>{name(player)}</span>, you’re up first
+            <h1 className="handoff-title">
+              <span style={{ color }}>{name(player)}</span>, you’re up first!
             </h1>
             <p className="muted" style={{ maxWidth: 320, margin: '12px auto 0' }}>
               Swipe through every title. Your picks stay secret until {name(otherPlayer(player))} has had a turn.
@@ -304,7 +348,7 @@ function Handoff({ session, player, onGo }: { session: SessionDetail; player: Pl
         ) : (
           <>
             <p className="eyebrow">Hand the phone over</p>
-            <h1 className="display handoff-title">
+            <h1 className="handoff-title">
               <span style={{ color }}>{name(player)}</span>’s turn!
             </h1>
             <p className="muted" style={{ maxWidth: 320, margin: '12px auto 0' }}>
@@ -314,7 +358,7 @@ function Handoff({ session, player, onGo }: { session: SessionDetail; player: Pl
         )}
       </motion.div>
       <motion.button className="btn primary lg block" style={{ marginTop: 32, maxWidth: 360 }} onClick={onGo} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
-        I’m {name(player)} — let’s go
+        ▶ I’m {name(player)} — let’s go
       </motion.button>
     </div>
   );
@@ -326,7 +370,7 @@ function shareUrl(code: string) {
 
 function Lobby({ session, me, onGo }: { session: SessionDetail; me: PlayerId; onGo: () => void }) {
   const { name, toast } = useApp();
-  const navigate = useNavigate();
+  const leave = useLeaveNight(session.id);
   const partner = otherPlayer(me);
   const p = session.progress[partner];
   const [copied, setCopied] = useState(false);
@@ -344,11 +388,11 @@ function Lobby({ session, me, onGo }: { session: SessionDetail; me: PlayerId; on
 
   return (
     <div className="page no-tabs handoff">
-      <button className="icon-btn glass" style={{ position: 'absolute', top: 'calc(var(--safe-top) + 16px)', left: 18 }} onClick={() => navigate('/')} aria-label="Leave">
-        <X size={20} />
+      <button className="icon-btn corner-btn" onClick={leave} aria-label="Leave or cancel movie night">
+        <X size={20} strokeWidth={2.6} />
       </button>
       <p className="eyebrow">Two-phone movie night</p>
-      <h1 className="display handoff-title" style={{ marginBottom: 6 }}>Your room code</h1>
+      <h1 className="handoff-title" style={{ marginBottom: 6 }}>Your room code</h1>
       <div className="code-big" aria-label={`Code ${session.code.split('').join(' ')}`}>
         {session.code.split('').map((c, i) => (
           <motion.span key={i} initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: i * 0.07 }}>
@@ -367,10 +411,10 @@ function Lobby({ session, me, onGo }: { session: SessionDetail; me: PlayerId; on
       <div className="card row" style={{ marginTop: 26, width: '100%', maxWidth: 360 }}>
         <span className="dot" style={{ background: partner === 1 ? 'var(--p1)' : 'var(--p2)' }} />
         <span className="grow">{name(partner)}</span>
-        <span className="faint">{p.done > 0 ? `${p.done} of ${p.total} swiped` : 'Not started yet'}</span>
+        <span className="faint">{p.done > 0 ? <span className="led">{p.done}/{p.total}</span> : 'Not started yet'}</span>
       </div>
       <button className="btn primary lg block" style={{ marginTop: 22, maxWidth: 360 }} onClick={onGo}>
-        Start swiping ({session.deck.length})
+        ▶ Start swiping ({session.deck.length})
       </button>
     </div>
   );
@@ -379,14 +423,13 @@ function Lobby({ session, me, onGo }: { session: SessionDetail; me: PlayerId; on
 function Waiting({ session, me }: { session: SessionDetail; me: PlayerId }) {
   const { name } = useApp();
   const navigate = useNavigate();
+  const leave = useLeaveNight(session.id);
   const partner = otherPlayer(me);
   const p = session.progress[partner];
   return (
     <div className="page no-tabs handoff">
-      <motion.div className="waiting-orb" animate={{ scale: [1, 1.08, 1] }} transition={{ repeat: Infinity, duration: 2.4, ease: 'easeInOut' }}>
-        🍿
-      </motion.div>
-      <h1 className="display handoff-title">All done!</h1>
+      <BouncingDisc />
+      <h1 className="handoff-title">All done!</h1>
       <p className="muted" style={{ textAlign: 'center', maxWidth: 320, marginTop: 8 }}>
         Waiting for {name(partner)} to finish. Your matches will appear here automatically.
       </p>
@@ -396,18 +439,25 @@ function Waiting({ session, me }: { session: SessionDetail; me: PlayerId }) {
             <span className="dot" style={{ background: partner === 1 ? 'var(--p1)' : 'var(--p2)' }} />
             {name(partner)}
           </span>
-          <span className="faint">
-            {p.done} of {p.total}
+          <span className="led">
+            {p.done}/{p.total}
           </span>
         </div>
         <div className="progress">
           <motion.div className="progress-fill" animate={{ width: `${(p.done / Math.max(1, p.total)) * 100}%` }} />
         </div>
       </div>
-      <p className="faint" style={{ marginTop: 16 }}>Room code {session.code}</p>
-      <button className="btn ghost" style={{ marginTop: 12 }} onClick={() => navigate('/')}>
-        Back home
-      </button>
+      <p className="faint" style={{ marginTop: 16 }}>
+        Room code <span className="led">{session.code}</span>
+      </p>
+      <div className="row" style={{ marginTop: 12 }}>
+        <button className="btn" onClick={() => navigate('/')}>
+          Back home
+        </button>
+        <button className="btn ghost" onClick={leave}>
+          Cancel night
+        </button>
+      </div>
     </div>
   );
 }
@@ -420,12 +470,19 @@ function Reveal({ session, onDone }: { session: SessionDetail; onDone: () => voi
   const highlight = [...(session.results?.perfect ?? []), ...(session.results?.possible ?? [])].slice(0, 3).map((k) => byKey.get(k)!);
 
   useEffect(() => {
+    // Drumroll, then the big reveal.
+    const ticks = Array.from({ length: 14 }, (_, i) => window.setTimeout(() => sfx.tick(), i * 120));
     const t = window.setTimeout(() => {
       setStage('result');
       navigator.vibrate?.([20, 60, 30]);
+      if (perfect || possible) sfx.fanfare();
+      else sfx.wahwah();
     }, 1900);
-    return () => window.clearTimeout(t);
-  }, []);
+    return () => {
+      ticks.forEach(window.clearTimeout);
+      window.clearTimeout(t);
+    };
+  }, [perfect, possible]);
 
   return (
     <div className="page no-tabs handoff reveal">
@@ -444,10 +501,11 @@ function Reveal({ session, onDone }: { session: SessionDetail; onDone: () => voi
                 </motion.div>
               ))}
             </div>
-            <h1 className="display handoff-title">Comparing your picks…</h1>
+            <h1 className="handoff-title">Comparing your picks…</h1>
           </motion.div>
         ) : (
           <motion.div key="result" initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: 'spring', stiffness: 200, damping: 16 }} style={{ textAlign: 'center', width: '100%' }}>
+            {(perfect > 0 || possible > 0) && <Confetti />}
             {highlight.length > 0 ? (
               <div className="fan" style={{ marginBottom: 26 }}>
                 {highlight.map((t, i) => (
@@ -466,7 +524,7 @@ function Reveal({ session, onDone }: { session: SessionDetail; onDone: () => voi
               <div style={{ fontSize: 64, marginBottom: 12 }}>🫣</div>
             )}
             <p className="eyebrow">{perfect ? 'It’s a match!' : possible ? 'Close enough!' : 'Tough crowd'}</p>
-            <h1 className="display handoff-title">
+            <h1 className="handoff-title">
               {perfect
                 ? `${perfect} perfect match${perfect === 1 ? '' : 'es'}`
                 : possible

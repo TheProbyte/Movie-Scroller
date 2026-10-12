@@ -10,6 +10,7 @@ A cozy, private, swipe-to-match movie & TV picker for two. Each of you swipes **
 - **History & Our Taste** – every night’s filters, votes and matches, plus agreement %, favorite genres, genre compatibility, “one loved it, one passed”, and rating gaps.
 - **Discover** – search plus rails for trending, new releases, popular TV, classics, your services and recommendations. Titles you’ve rejected or watched stay hidden (reset any time in Settings).
 - **Installable PWA** – add it to your home screen; both phones stay in sync.
+- **Video-store style** – early-2000s glossy buttons, DVD-case covers, LED counters, sparkles, confetti and little synthesized sound effects (mute them in Settings or on the swipe screen).
 
 ## Put it online for free (Cloudflare)
 
@@ -22,11 +23,20 @@ npm install
 npm run deploy
 ```
 
-`npm run deploy` does everything: opens a browser to log in to Cloudflare, creates the database, builds, deploys, and asks you for a household passcode and your TMDB key. When it finishes it prints your address, like `https://moviematch.<your-name>.workers.dev`.
+`npm run deploy` does everything: opens a browser to log in to Cloudflare, builds, deploys (creating the database the first time), and asks you for a household passcode and your TMDB key. When it finishes it prints your address, like `https://moviematch.<your-name>.workers.dev`.
 
 Then on each phone open that address and **Add to Home Screen** (iPhone Safari: Share → Add to Home Screen; Android Chrome: menu → Install app). The first phone runs setup (names, region, streaming services); the second just taps “I’m …”.
 
 To update after changing something, run `npm run deploy` again — your data stays put.
+
+### Automatic updates (recommended)
+
+Let Cloudflare redeploy by itself whenever new code lands on GitHub — no PC needed:
+
+1. In the [Cloudflare dashboard](https://dash.cloudflare.com) open **Workers & Pages → moviematch → Settings → Build**.
+2. Under **Git repository**, click **Connect** and pick your GitHub repo (authorize Cloudflare’s GitHub app if asked).
+3. Set the **production branch** to the branch you deploy from, **build command** to `npm run build`, and leave the **deploy command** as `npx wrangler deploy`.
+4. Save. Cloudflare builds and deploys right away, then again on every push. Your database, passcode and TMDB key carry over automatically.
 
 > **Windows tip:** if PowerShell says “running scripts is disabled”, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd run deploy`.
 

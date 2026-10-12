@@ -10,6 +10,7 @@ import { Poster } from '../components/Poster';
 import { GENRES, MOODS, PERIODS, RATINGS, RUNTIMES } from '../../shared/catalog';
 import type { PlayerId, SessionFilters, SessionMode } from '../../shared/types';
 import { DEFAULT_FILTERS } from '../../shared/types';
+import { sfx } from '../sound';
 
 const FILTERS_KEY = 'mm.lastFilters';
 const MODE_KEY = 'mm.lastMode';
@@ -63,6 +64,7 @@ export function NewNight() {
 
   const start = async (filters: SessionFilters) => {
     setLoading(true);
+    sfx.shuffle();
     try {
       const creator = me ?? first;
       const { id } = await api.createSession({ mode, filters, createdBy: creator, firstPlayer: mode === 'pass' ? first : creator });
@@ -77,7 +79,7 @@ export function NewNight() {
 
   return (
     <div className="page no-tabs new-night">
-      <PageHeader back="/" title="Movie Night" sub="Set the vibe, or let fate decide." />
+      <PageHeader back="/" title="Movie Night" sub="Set the vibe — or let fate decide." />
 
       <div className="section-title" style={{ marginTop: 0 }}>How are you playing?</div>
       <div className="mode-grid">
@@ -200,7 +202,7 @@ export function NewNight() {
             sub={
               boot.settings.services.length === 0 ? (
                 <>
-                  Pick your services in <Link to="/settings" style={{ color: 'var(--accent)' }}>Settings</Link>
+                  Pick your services in <Link to="/settings" style={{ color: 'var(--gold)' }}>Settings</Link>
                 </>
               ) : (
                 <span className="row" style={{ gap: 4, marginTop: 4 }}>
@@ -243,8 +245,11 @@ export function NewNight() {
                 </motion.div>
               ))}
             </div>
-            <h2 className="display" style={{ fontSize: 30 }}>Shuffling the deck…</h2>
+            <h2 className="chrome">Shuffling the shelves…</h2>
             <p className="muted">Finding {f.size} titles you might both love</p>
+            <div className="progress loading-bar">
+              <motion.div className="progress-fill" initial={{ width: '4%' }} animate={{ width: '92%' }} transition={{ duration: 6, ease: 'easeOut' }} />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

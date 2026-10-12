@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Dices, Info, Popcorn, X } from 'lucide-react';
 import { useApp } from '../context';
 import { Poster, formatRuntime } from './Poster';
+import { Confetti } from './Fx';
+import { sfx } from '../sound';
 import type { Title } from '../../shared/types';
 
 /**
@@ -37,12 +39,14 @@ export function Roulette({ titles, onClose, onPick }: { titles: Title[]; onClose
         setCurrent(winner);
         setSpinning(false);
         last.current = winner.key;
+        sfx.land();
         navigator.vibrate?.([12, 40, 20]);
         return;
       }
       i = (i + 1) % titles.length;
       if (titles.length > 1 && s === steps.length - 1 && titles[i].key === winner.key) i = (i + 1) % titles.length;
       setCurrent(titles[i]);
+      sfx.tick();
       navigator.vibrate?.(4);
       window.setTimeout(tick, steps[s++]);
     };
@@ -55,13 +59,15 @@ export function Roulette({ titles, onClose, onPick }: { titles: Title[]; onClose
   return (
     <motion.div className="roulette" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="roulette-glow" style={{ opacity: spinning ? 0.35 : 0.9 }} />
-      <button className="icon-btn glass" style={{ position: 'absolute', top: 'calc(var(--safe-top) + 16px)', right: 18 }} onClick={onClose} aria-label="Close roulette">
+      <button className="icon-btn" style={{ position: 'absolute', top: 'calc(var(--safe-top) + 16px)', right: 18 }} onClick={onClose} aria-label="Close roulette">
         <X size={20} />
       </button>
 
-      <div className="roulette-label">{spinning ? 'Spinning…' : 'Tonight you’re watching'}</div>
+      <div className="roulette-label">{spinning ? '★ Spinning… ★' : '★ Tonight you’re watching ★'}</div>
 
+      {!spinning && <Confetti key={current.key} count={30} />}
       <div className="roulette-stage">
+        <span className="roulette-lights" aria-hidden />
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div
             key={current.key + String(spinning)}
@@ -71,7 +77,7 @@ export function Roulette({ titles, onClose, onPick }: { titles: Title[]; onClose
             transition={spinning ? { duration: 0.08 } : { type: 'spring', stiffness: 260, damping: 14 }}
             className={`roulette-card ${spinning ? '' : 'landed'}`}
           >
-            <Poster title={current} size="w500" eager />
+            <Poster title={current} size="w500" eager band />
           </motion.div>
         </AnimatePresence>
       </div>
@@ -80,7 +86,7 @@ export function Roulette({ titles, onClose, onPick }: { titles: Title[]; onClose
         <AnimatePresence>
           {!spinning && (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <h2 className="display" style={{ fontSize: 34, lineHeight: 1.05 }}>{current.title}</h2>
+              <h2 className="detail-title" style={{ fontSize: 28 }}>{current.title}</h2>
               <p className="muted" style={{ marginTop: 6 }}>{[current.year, formatRuntime(current), current.genres.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}</p>
             </motion.div>
           )}

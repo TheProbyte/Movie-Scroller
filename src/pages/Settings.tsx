@@ -5,10 +5,12 @@ import { useApp } from '../context';
 import { PageHeader } from '../components/PageHeader';
 import { ServicesPicker } from '../components/ServicesPicker';
 import { REGIONS } from '../../shared/catalog';
+import { sfx, useMuted } from '../sound';
 import type { PlayerId } from '../../shared/types';
 
 export function Settings() {
-  const { boot, me, setMe, toast } = useApp();
+  const { boot, me, setMe, toast, ask } = useApp();
+  const [muted, setMuted] = useMuted();
   const qc = useQueryClient();
   const [names, setNames] = useState(boot.players.map((p) => p.name));
   const [region, setRegion] = useState(boot.settings.region);
@@ -79,6 +81,24 @@ export function Settings() {
         {saving ? 'Saving…' : 'Save changes'}
       </button>
 
+      <div className="section-title">Sound</div>
+      <div className="card" style={{ padding: '4px 16px' }}>
+        <button
+          className="toggle-row switch-row"
+          aria-pressed={!muted}
+          onClick={() => {
+            setMuted(!muted);
+            if (muted) window.setTimeout(() => sfx.yes(), 30);
+          }}
+        >
+          <div className="grow">
+            <div style={{ fontWeight: 800 }}>Sound effects</div>
+            <div className="faint" style={{ fontSize: 13 }}>Swipes, matches and roulette bleeps (this phone only)</div>
+          </div>
+          <span className={`switch ${!muted ? 'on' : ''}`} />
+        </button>
+      </div>
+
       <div className="section-title">Discovery</div>
       <div className="card">
         <strong>Reset discovery memory</strong>
@@ -88,7 +108,16 @@ export function Settings() {
         <button
           className="btn sm"
           onClick={async () => {
-            if (!confirm('Show previously rejected titles again in future movie nights?')) return;
+            const v = await ask({
+              title: 'Reset discovery',
+              icon: '🔄',
+              message: 'Show previously rejected titles again in future movie nights?',
+              buttons: [
+                { label: 'Reset', value: 'yes', variant: 'primary' },
+                { label: 'Cancel', value: 'no' },
+              ],
+            });
+            if (v !== 'yes') return;
             await api.resetDiscovery();
             qc.invalidateQueries({ queryKey: ['rails'] });
             toast('Discovery memory reset');

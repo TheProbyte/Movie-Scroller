@@ -45,7 +45,7 @@ export function History() {
                     </div>
                   </div>
                   {s.status === 'swiping' ? (
-                    <span className="tag" style={{ background: 'rgba(242,180,90,.18)', color: 'var(--accent)' }}>In progress</span>
+                    <span className="tag" style={{ background: 'rgba(242,180,90,.18)', color: 'var(--gold)' }}>In progress</span>
                   ) : (
                     <span className="tag">💚 {s.perfectKeys.length} · 🤔 {s.possibleKeys.length}</span>
                   )}

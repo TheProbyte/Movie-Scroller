@@ -7,6 +7,7 @@ import { api } from '../api';
 import { useApp } from '../context';
 import { Poster, formatRuntime } from './Poster';
 import { Roulette } from './Roulette';
+import { sfx } from '../sound';
 import { VOTE_EMOJI } from './TitleSheet';
 import type { PlayerId, SessionDetail, Title } from '../../shared/types';
 import { GENRES, MOODS, PERIODS, RUNTIMES } from '../../shared/catalog';
@@ -26,7 +27,7 @@ export function filterSummary(s: Pick<SessionDetail, 'filters'>): string[] {
 }
 
 export function Results({ session }: { session: SessionDetail }) {
-  const { name, openTitle, toast, me, img } = useApp();
+  const { name, openTitle, toast, me, ask } = useApp();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [roulette, setRoulette] = useState<Title[] | null>(null);
@@ -69,17 +70,20 @@ export function Results({ session }: { session: SessionDetail }) {
         { sessionId: session.id, addedBy: me ?? undefined },
       );
       qc.invalidateQueries({ queryKey: ['watchlist'] });
-      toast(`Saved ${r.perfect.length + r.possible.length} to your watchlist`);
+      sfx.bling();
+      toast(`Saved ${r.perfect.length + r.possible.length} to your watchlist ★`);
     });
 
   const more = () =>
     run('more', async () => {
+      sfx.shuffle();
       await api.more(session.id, 10);
       await refresh();
     });
 
   const again = () =>
     run('again', async () => {
+      sfx.shuffle();
       const { id } = await api.createSession({
         mode: session.mode,
         filters: session.filters,
@@ -94,11 +98,8 @@ export function Results({ session }: { session: SessionDetail }) {
 
   return (
     <div className="page no-tabs results">
-      <div className="ambient" aria-hidden>
-        {(chosen ?? perfect[0] ?? possible[0])?.poster && <img src={img((chosen ?? perfect[0] ?? possible[0])!.poster, 'w185')!} alt="" />}
-      </div>
       <div className="page-header" style={{ marginBottom: 6 }}>
-        <button className="icon-btn glass" onClick={() => navigate('/')} aria-label="Home">
+        <button className="icon-btn" onClick={() => navigate('/')} aria-label="Home">
           <X size={20} />
         </button>
         <span className="faint" style={{ fontSize: 13 }}>
@@ -157,7 +158,7 @@ export function Results({ session }: { session: SessionDetail }) {
                     {formatRuntime(t) && <> · {formatRuntime(t)}</>}
                     {t.rating > 0 && (
                       <>
-                        {' '}· <Star size={11} fill="var(--accent)" color="var(--accent)" /> {t.rating.toFixed(1)}
+                        {' '}· <Star size={11} fill="var(--gold)" color="var(--gold)" /> {t.rating.toFixed(1)}
                       </>
                     )}
                   </div>
@@ -187,7 +188,7 @@ export function Results({ session }: { session: SessionDetail }) {
             {possible.map((t) => (
               <button key={t.key} style={{ textAlign: 'left', position: 'relative' }} onClick={() => openTitle(t.key, { sessionId: session.id })}>
                 <Poster title={t} />
-                <span className="vote-badge glass">
+                <span className="vote-badge">
                   {VOTE_EMOJI[r.votes[t.key][1]!]} {VOTE_EMOJI[r.votes[t.key][2]!]}
                 </span>
                 <div className="tile-title">{t.title}</div>
@@ -252,8 +253,17 @@ export function Results({ session }: { session: SessionDetail }) {
         className="btn ghost sm"
         style={{ margin: '28px auto 0', display: 'flex', color: 'var(--text-3)' }}
         onClick={() => {
-          if (!confirm('Delete this movie night from your history?')) return;
           run('delete', async () => {
+            const v = await ask({
+              title: 'Delete movie night',
+              icon: '🗑️',
+              message: 'Delete this movie night from your history? Your watchlist stays as it is.',
+              buttons: [
+                { label: 'Delete it', value: 'yes', variant: 'danger' },
+                { label: 'Keep it', value: 'no' },
+              ],
+            });
+            if (v !== 'yes') return;
             await api.deleteSession(session.id);
             qc.invalidateQueries({ queryKey: ['sessions'] });
             navigate('/history');

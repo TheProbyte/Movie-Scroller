@@ -71,12 +71,9 @@ export function Setup() {
         <motion.div key={step} initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.25 }}>
           {step === 'welcome' && (
             <div className="setup-welcome">
-              <div className="setup-logo">🍿</div>
-              <h1 className="display" style={{ fontSize: 52, lineHeight: 0.95 }}>
-                Movie night,
-                <br />
-                <em style={{ color: 'var(--accent)' }}>decided together.</em>
-              </h1>
+              <span className="logo-disc setup-logo" aria-hidden />
+              <h1 className="chrome" style={{ fontSize: 40, lineHeight: 1, textAlign: 'center' }}>MovieMatch</h1>
+              <p className="logo-sub" style={{ textAlign: 'center', fontSize: 16, marginTop: 8 }}>★ Movie night, decided together ★</p>
               <p className="muted" style={{ marginTop: 16, fontSize: 16 }}>
                 Swipe on movies and shows separately, then see what you both want to watch. Let’s set things up — it takes a minute.
               </p>
@@ -95,11 +92,11 @@ export function Setup() {
               <ol className="muted setup-steps">
                 <li>
                   Create a free account at{' '}
-                  <a href="https://www.themoviedb.org/signup" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>themoviedb.org</a>
+                  <a href="https://www.themoviedb.org/signup" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)' }}>themoviedb.org</a>
                 </li>
                 <li>
                   Open{' '}
-                  <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>Settings → API</a>{' '}
+                  <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)' }}>Settings → API</a>{' '}
                   and request a developer key
                 </li>
                 <li>Paste the “API Key” or “API Read Access Token” below</li>

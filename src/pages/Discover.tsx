@@ -95,7 +95,7 @@ export function Discover() {
               {rails.data![r.key].slice(0, 20).map((t) => (
                 <button key={t.key} onClick={() => openTitle(t.key)} style={{ textAlign: 'left', position: 'relative' }}>
                   <Poster title={t} size="w342" />
-                  {saved.has(t.key) && <span className="tag glass-tag" style={{ position: 'absolute', top: 6, left: 6 }}>✓</span>}
+                  {saved.has(t.key) && <span className="tile-badges"><span className="tag glass-tag">✓ Saved</span></span>}
                   <div className="tile-title">{t.title}</div>
                   <div className="tile-sub">{[t.year, t.type === 'tv' ? 'Series' : null].filter(Boolean).join(' · ')}</div>
                 </button>

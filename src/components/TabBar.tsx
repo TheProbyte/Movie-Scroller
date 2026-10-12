@@ -11,7 +11,7 @@ const TABS = [
 
 export function TabBar() {
   return (
-    <nav className="tabbar glass" aria-label="Main">
+    <nav className="tabbar" aria-label="Main">
       {TABS.map(({ to, label, icon: Icon }) => (
         <NavLink key={to} to={to} end={to === '/'}>
           <Icon size={22} strokeWidth={1.9} />

@@ -1,14 +1,9 @@
 #!/usr/bin/env node
-// One-command deploy to Cloudflare's free plan: login -> database -> build -> deploy -> secrets.
+// One-command deploy to Cloudflare's free plan: login -> build -> deploy -> secrets.
+// The D1 database needs no setup: Wrangler finds (or creates) the "moviematch" database on deploy.
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
 import readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-
-const DB_NAME = 'moviematch';
-const CONFIG = 'wrangler.jsonc';
-const PLACEHOLDER = '00000000-0000-0000-0000-000000000000';
-const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 /** Run a shell command (shell:true so it also works with Windows .cmd shims). */
 function sh(cmd, { input, inherit = false } = {}) {
@@ -76,28 +71,6 @@ if (!existing.has('APP_PASSCODE') || !(existing.has('TMDB_API_KEY') || existing.
   }
   rl.close();
 }
-
-// 3. Database -----------------------------------------------------------------
-let config = fs.readFileSync(CONFIG, 'utf8');
-const current = config.match(/"database_id"\s*:\s*"([^"]+)"/)?.[1];
-if (!current || current === PLACEHOLDER) {
-  say('\nSetting up your database…');
-  let id;
-  const list = parseJson(sh('npx wrangler d1 list --json').out, '[', ']');
-  id = list?.find((d) => d.name === DB_NAME)?.uuid;
-  if (!id) {
-    const r = sh(`npx wrangler d1 create ${DB_NAME}`);
-    id = (r.out.match(UUID) ?? []).find((u) => u !== PLACEHOLDER);
-    if (!r.ok || !id) {
-      // It may already exist from an earlier attempt.
-      id = parseJson(sh('npx wrangler d1 list --json').out, '[', ']')?.find((d) => d.name === DB_NAME)?.uuid;
-    }
-    if (!id) fail('Couldn’t create the database.', `${r.out}\n(If you have several Cloudflare accounts, set CLOUDFLARE_ACCOUNT_ID first.)`);
-  }
-  config = config.replace(/("database_id"\s*:\s*")[^"]+(")/, `$1${id}$2`);
-  fs.writeFileSync(CONFIG, config);
-}
-say('✔ Database ready');
 
 // 4. Build and deploy ---------------------------------------------------------
 say('\nBuilding the app…');
